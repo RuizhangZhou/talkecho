@@ -4,7 +4,7 @@ import {
   SPEECH_TO_TEXT_PROVIDERS,
   STORAGE_KEYS,
 } from "@/config";
-import { safeLocalStorage, trackAppStart } from "@/lib";
+import { getPlatform, safeLocalStorage, trackAppStart } from "@/lib";
 import { getShortcutsConfig } from "@/lib/storage";
 import {
   getCustomizableState,
@@ -263,6 +263,12 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const updateCursor = (type: CursorType | undefined) => {
     try {
       const currentWindow = getCurrentWindow();
+      const platform = getPlatform();
+      // For Linux, always use default cursor
+      if (platform === "linux") {
+        document.documentElement.style.setProperty("--cursor-type", "default");
+        return;
+      }
       const windowLabel = currentWindow.label;
 
       if (windowLabel === "dashboard") {
