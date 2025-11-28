@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useApp } from "@/contexts";
 import { fetchSTT, fetchAIResponse } from "@/lib/functions";
+import { useMicVAD } from "@ricky0123/vad-react";
 import {
   DEFAULT_QUICK_ACTIONS,
   DEFAULT_SYSTEM_PROMPT,
@@ -19,6 +20,13 @@ import {
   generateMessageId,
 } from "@/lib";
 import { Message } from "@/types/completion";
+import {
+  MicrophoneRecorder,
+  base64ToAudioBuffer,
+  mixAudioBuffers,
+  audioBufferToBase64,
+} from "@/lib/audio-mixer";
+import { floatArrayToWav } from "@/lib/utils";
 
 // VAD Configuration interface matching Rust
 export interface VadConfig {
@@ -52,6 +60,7 @@ interface ChatMessage {
   role: "user" | "assistant" | "system";
   content: string;
   timestamp: number;
+  source?: "system_audio" | "microphone"; // audio source
 }
 
 // Conversation interface (reusing from useCompletion)
@@ -88,6 +97,10 @@ export function useSystemAudio() {
   const [stream, setStream] = useState<MediaStream | null>(null); // for audio visualizer
   const streamRef = useRef<MediaStream | null>(null);
 
+  // Microphone dual-track mode
+  const [includeMicrophone, setIncludeMicrophone] = useState<boolean>(false);
+  const [isMicProcessing, setIsMicProcessing] = useState<boolean>(false);
+
   const [conversation, setConversation] = useState<ChatConversation>({
     id: "",
     title: "",
@@ -113,6 +126,43 @@ export function useSystemAudio() {
   const isSavingRef = useRef<boolean>(false);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
+  // Ref to hold the microphone processing function to avoid closure issues
+  const processMicrophoneAudioRef = useRef<((audio: Float32Array) => Promise<void>) | null>(null);
+
+  // Microphone VAD for dual-track mode
+  const audioConstraints: MediaTrackConstraints = selectedAudioDevices.input
+    ? { deviceId: { exact: selectedAudioDevices.input } }
+    : { deviceId: "default" };
+
+  const micVAD = useMicVAD({
+    startOnLoad: false, // We'll start it manually
+    userSpeakingThreshold: 0.6,
+    additionalAudioConstraints: audioConstraints,
+    onSpeechEnd: async (audio: Float32Array) => {
+      // Only process if microphone mode is enabled and capturing
+      if (includeMicrophone && capturing && processMicrophoneAudioRef.current) {
+        await processMicrophoneAudioRef.current(audio);
+      }
+    },
+  });
+
+  // Control microphone VAD based on includeMicrophone and capturing状态
+  useEffect(() => {
+    if (includeMicrophone && capturing) {
+      // Start microphone VAD
+      if (!micVAD.listening) {
+        micVAD.start();
+        console.log("Microphone VAD started");
+      }
+    } else {
+      // Stop microphone VAD
+      if (micVAD.listening) {
+        micVAD.pause();
+        console.log("Microphone VAD stopped");
+      }
+    }
+  }, [includeMicrophone, capturing, micVAD.listening]);
+
   // Load context settings and VAD config from localStorage on mount
   useEffect(() => {
     const savedContext = safeLocalStorage.getItem(
@@ -136,6 +186,18 @@ export function useSystemAudio() {
         setVadConfig(parsed);
       } catch (error) {
         console.error("Failed to load VAD config:", error);
+      }
+    }
+
+    // Load microphone mixing setting
+    const savedIncludeMic = safeLocalStorage.getItem(
+      STORAGE_KEYS.SYSTEM_AUDIO_INCLUDE_MICROPHONE
+    );
+    if (savedIncludeMic !== null) {
+      try {
+        setIncludeMicrophone(savedIncludeMic === "true");
+      } catch (error) {
+        console.error("Failed to load microphone mixing setting:", error);
       }
     }
   }, []);
@@ -229,7 +291,8 @@ export function useSystemAudio() {
             if (!capturing) return;
 
             const base64Audio = event.payload as string;
-            // Convert to blob
+
+            // Convert to blob (system audio only, microphone handled separately)
             const binaryString = atob(base64Audio);
             const bytes = new Uint8Array(binaryString.length);
             for (let i = 0; i < binaryString.length; i++) {
@@ -320,6 +383,7 @@ export function useSystemAudio() {
     selectedSttProvider,
     allSttProviders,
     conversation.messages.length,
+    includeMicrophone,
   ]);
 
   // Context management functions
@@ -356,6 +420,19 @@ export function useSystemAudio() {
     },
     [useSystemPrompt, saveContextSettings]
   );
+
+  // Microphone mixing management
+  const updateIncludeMicrophone = useCallback((value: boolean) => {
+    setIncludeMicrophone(value);
+    try {
+      safeLocalStorage.setItem(
+        STORAGE_KEYS.SYSTEM_AUDIO_INCLUDE_MICROPHONE,
+        value.toString()
+      );
+    } catch (error) {
+      console.error("Failed to save microphone mixing setting:", error);
+    }
+  }, []);
 
   // Quick actions management
   const saveQuickActions = useCallback((actions: string[]) => {
@@ -444,6 +521,130 @@ export function useSystemAudio() {
     }
   }, [isContinuousMode, isRecordingInContinuousMode]);
 
+  // Microphone audio processing function (for dual-track mode)
+  const processMicrophoneAudio = useCallback(
+    async (audioData: Float32Array) => {
+      try {
+        setIsMicProcessing(true);
+        setError("");
+
+        // Convert Float32Array to WAV blob
+        const audioBlob = floatArrayToWav(audioData, 16000, "wav");
+
+        const usePluelyAPI = await shouldUsePluelyAPI();
+        if (!selectedSttProvider.provider && !usePluelyAPI) {
+          setError("No speech provider selected.");
+          return;
+        }
+
+        const providerConfig = allSttProviders.find(
+          (p) => p.id === selectedSttProvider.provider
+        );
+
+        if (!providerConfig && !usePluelyAPI) {
+          setError("Speech provider config not found.");
+          return;
+        }
+
+        // STT transcription
+        const transcription = await fetchSTT({
+          provider: providerConfig,
+          selectedProvider: selectedSttProvider,
+          audio: audioBlob,
+        });
+
+        if (!transcription.trim()) {
+          setError("Received empty transcription from microphone");
+          return;
+        }
+
+        // AI translation (independent, no history needed for translation)
+        const effectiveSystemPrompt = useSystemPrompt
+          ? systemPrompt || DEFAULT_SYSTEM_PROMPT
+          : contextContent || DEFAULT_SYSTEM_PROMPT;
+
+        if (!selectedAIProvider.provider && !usePluelyAPI) {
+          setError("No AI provider selected.");
+          return;
+        }
+
+        const aiProvider = allAiProviders.find(
+          (p) => p.id === selectedAIProvider.provider
+        );
+        if (!aiProvider && !usePluelyAPI) {
+          setError("AI provider config not found.");
+          return;
+        }
+
+        let fullResponse = "";
+        try {
+          for await (const chunk of fetchAIResponse({
+            provider: usePluelyAPI ? undefined : aiProvider,
+            selectedProvider: selectedAIProvider,
+            systemPrompt: effectiveSystemPrompt,
+            history: [], // No history for independent translation
+            userMessage: transcription,
+            imagesBase64: [],
+          })) {
+            fullResponse += chunk;
+          }
+        } catch (aiError: any) {
+          console.error("Microphone AI error:", aiError);
+          setError(aiError.message || "Failed to get AI response for microphone");
+        }
+
+        // Save to conversation with microphone source
+        // Always save the transcription, even if translation fails
+        const timestamp = Date.now();
+        setConversation((prev) => ({
+          ...prev,
+          messages: [
+            {
+              id: generateMessageId("user", timestamp),
+              role: "user" as const,
+              content: transcription,
+              timestamp,
+              source: "microphone" as const,
+            },
+            ...(fullResponse
+              ? [
+                  {
+                    id: generateMessageId("assistant", timestamp + 1),
+                    role: "assistant" as const,
+                    content: fullResponse,
+                    timestamp: timestamp + 1,
+                    source: "microphone" as const,
+                  },
+                ]
+              : []),
+            ...prev.messages,
+          ],
+          updatedAt: timestamp,
+          title: prev.title || generateConversationTitle(transcription),
+        }));
+      } catch (err) {
+        console.error("Microphone processing error:", err);
+        setError("Failed to process microphone audio");
+      } finally {
+        setIsMicProcessing(false);
+      }
+    },
+    [
+      selectedSttProvider,
+      allSttProviders,
+      selectedAIProvider,
+      allAiProviders,
+      systemPrompt,
+      useSystemPrompt,
+      contextContent,
+    ]
+  );
+
+  // Update the ref whenever the processing function changes
+  useEffect(() => {
+    processMicrophoneAudioRef.current = processMicrophoneAudio;
+  }, [processMicrophoneAudio]);
+
   // AI Processing function
   const processWithAI = useCallback(
     async (
@@ -504,12 +705,14 @@ export function useSystemAudio() {
                 role: "user" as const,
                 content: transcription,
                 timestamp,
+                source: "system_audio" as const, // 标记为系统音频
               },
               {
                 id: generateMessageId("assistant", timestamp + 1),
                 role: "assistant" as const,
                 content: fullResponse,
                 timestamp: timestamp + 1,
+                source: "system_audio" as const, // 标记为系统音频
               },
               ...prev.messages,
             ],
@@ -580,7 +783,7 @@ export function useSystemAudio() {
       setError(errorMessage);
       setIsPopoverOpen(true);
     }
-  }, [vadConfig, selectedAudioDevices.output]);
+  }, [vadConfig, selectedAudioDevices.output, includeMicrophone, selectedAudioDevices.input]);
 
   const stopCapture = useCallback(async () => {
     try {
@@ -720,6 +923,7 @@ export function useSystemAudio() {
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((track) => track.stop());
       }
+      // Microphone VAD cleanup handled by useMicVAD
       invoke("stop_system_audio_capture").catch(() => {});
     };
   }, []);
@@ -932,5 +1136,10 @@ export function useSystemAudio() {
     // Scroll area ref for keyboard navigation
     scrollAreaRef,
     stream,
+    // Microphone dual-track mode
+    includeMicrophone,
+    setIncludeMicrophone: updateIncludeMicrophone,
+    isMicProcessing,
+    micVAD,
   };
 }

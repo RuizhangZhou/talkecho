@@ -12,6 +12,7 @@ export const STORAGE_KEYS = {
   SELECTED_STT_PROVIDER: "curl_selected_stt_provider",
   SYSTEM_AUDIO_CONTEXT: "system_audio_context",
   SYSTEM_AUDIO_QUICK_ACTIONS: "system_audio_quick_actions",
+  SYSTEM_AUDIO_INCLUDE_MICROPHONE: "system_audio_include_microphone",
   CUSTOMIZABLE: "customizable",
   PLUELY_API_ENABLED: "pluely_api_enabled",
   SHORTCUTS: "shortcuts",

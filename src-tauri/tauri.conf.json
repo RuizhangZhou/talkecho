@@ -14,7 +14,7 @@
     "windows": [
       {
         "title": "Pluely - AI Assistant",
-        "width": 600,
+        "width": 800,
         "height": 54,
         "decorations": false,
         "transparent": true,

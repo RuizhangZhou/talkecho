@@ -75,7 +75,7 @@ pub fn set_window_height(window: tauri::WebviewWindow, height: u32) -> Result<()
     use tauri::{LogicalSize, Size};
 
     // Simply set the window size with fixed width and new height
-    let new_size = LogicalSize::new(600.0, height as f64);
+    let new_size = LogicalSize::new(800.0, height as f64);
     window
         .set_size(Size::Logical(new_size))
         .map_err(|e| format!("Failed to resize window: {}", e))?;
@@ -187,10 +187,11 @@ pub fn create_dashboard_window<R: Runtime>(
         .title("Pluely - Dashboard")
         .center()
         .decorations(true)
-        .inner_size(800.0, 600.0)
-        .min_inner_size(800.0, 600.0)
+        .inner_size(1000.0, 700.0)
+        .min_inner_size(900.0, 650.0)
         .content_protected(true)
-        .visible(true);
+        .visible(true)
+        .resizable(true);
 
     base_builder.build()
 }

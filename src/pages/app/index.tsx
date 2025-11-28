@@ -41,7 +41,7 @@ const App = () => {
           isHidden ? "hidden pointer-events-none" : ""
         }`}
       >
-        <Card className="w-full flex flex-row items-center gap-2 p-2">
+        <Card className="w-[calc(100vw-40px)] max-w-[780px] flex flex-row items-center gap-2 p-2">
           <SystemAudio {...systemAudio} />
           {systemAudio?.capturing ? (
             <div className="flex flex-row items-center gap-2 justify-between w-full">

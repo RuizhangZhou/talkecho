@@ -11,14 +11,12 @@ import {
   LoaderIcon,
   AudioLinesIcon,
 } from "lucide-react";
-import { Warning } from "./Warning";
 import { Header } from "./Header";
 import { SetupInstructions } from "./SetupInstructions";
 import { OperationSection } from "./OperationSection";
-import { Context } from "./Context";
-import { VadConfigPanel } from "./VadConfigPanel";
 import { PermissionFlow } from "./PermissionFlow";
 import { useSystemAudioType } from "@/hooks";
+import { useApp } from "@/contexts";
 
 export const SystemAudio = (props: useSystemAudioType) => {
   const {
@@ -33,24 +31,11 @@ export const SystemAudio = (props: useSystemAudioType) => {
     stopCapture,
     isPopoverOpen,
     setIsPopoverOpen,
-    useSystemPrompt,
-    setUseSystemPrompt,
-    contextContent,
-    setContextContent,
     startNewConversation,
     conversation,
     resizeWindow,
     handleSetup,
-    quickActions,
-    addQuickAction,
-    removeQuickAction,
-    isManagingQuickActions,
-    setIsManagingQuickActions,
-    showQuickActions,
-    setShowQuickActions,
-    handleQuickActionClick,
     vadConfig,
-    updateVadConfiguration,
     isContinuousMode,
     isRecordingInContinuousMode,
     recordingProgress,
@@ -58,8 +43,12 @@ export const SystemAudio = (props: useSystemAudioType) => {
     startContinuousRecording,
     ignoreContinuousRecording,
     scrollAreaRef,
+    includeMicrophone,
+    isMicProcessing,
   } = props;
-  const platform = navigator.platform.toLowerCase();
+  useApp();
+
+  // Get microphone device name
   const handleToggleCapture = async () => {
     if (capturing) {
       await stopCapture();
@@ -112,19 +101,13 @@ export const SystemAudio = (props: useSystemAudioType) => {
 
       {capturing || setupRequired || error ? (
         <PopoverContent
-          align="end"
+          align="start"
           side="bottom"
-          className="select-none w-screen p-0 border overflow-hidden border-input/50"
+          className="select-none w-[calc(100vw-50px)] max-w-[800px] p-0 border overflow-hidden border-input/50"
           sideOffset={8}
         >
-          <ScrollArea className="h-[calc(100vh-4rem)]" ref={scrollAreaRef}>
-            <div
-              className={`p-6 ${
-                !lastTranscription && !lastAIResponse
-                  ? "space-y-6"
-                  : "space-y-4"
-              }`}
-            >
+          <ScrollArea className="h-[calc(100vh-3rem)]" ref={scrollAreaRef}>
+            <div className="p-4 space-y-3">
               {/* Header - Hide when there are messages to save space */}
               {!lastTranscription && !lastAIResponse && (
                 <Header
@@ -265,45 +248,18 @@ export const SystemAudio = (props: useSystemAudioType) => {
                 </div>
               ) : (
                 <>
-                  {/* Operation Section */}
+                  {/* Conversation Display Only */}
                   <OperationSection
                     lastTranscription={lastTranscription}
                     lastAIResponse={lastAIResponse}
                     isAIProcessing={isAIProcessing}
                     conversation={conversation}
                     startNewConversation={startNewConversation}
-                    quickActions={quickActions}
-                    addQuickAction={addQuickAction}
-                    removeQuickAction={removeQuickAction}
-                    isManagingQuickActions={isManagingQuickActions}
-                    setIsManagingQuickActions={setIsManagingQuickActions}
-                    showQuickActions={showQuickActions}
-                    setShowQuickActions={setShowQuickActions}
-                    handleQuickActionClick={handleQuickActionClick}
-                  />
-                  {/* Context Settings */}
-                  <Context
-                    useSystemPrompt={useSystemPrompt}
-                    setUseSystemPrompt={setUseSystemPrompt}
-                    contextContent={contextContent}
-                    setContextContent={setContextContent}
-                  />
-
-                  {/* VAD Configuration */}
-                  <VadConfigPanel
-                    vadConfig={vadConfig}
-                    onUpdate={updateVadConfiguration}
+                    includeMicrophone={includeMicrophone}
+                    isMicProcessing={isMicProcessing}
                   />
                 </>
               )}
-              {!setupRequired && platform.includes("mac") && (
-                <SetupInstructions
-                  setupRequired={setupRequired}
-                  handleSetup={handleSetup}
-                />
-              )}
-              {/* Experimental Warning */}
-              <Warning />
             </div>
           </ScrollArea>
         </PopoverContent>

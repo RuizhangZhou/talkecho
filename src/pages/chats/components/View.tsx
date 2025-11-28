@@ -19,6 +19,9 @@ import {
   SendIcon,
   Check,
   Loader2,
+  HeadphonesIcon,
+  MicIcon,
+  BotIcon,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import moment from "moment";
@@ -157,6 +160,53 @@ const View = () => {
               moment(message.timestamp).format("YYYY-MM-DD") !==
                 moment(array[index - 1]?.timestamp).format("YYYY-MM-DD");
 
+            // Check if this is a dual-track message (has source field)
+            const isDualTrack = !!message.source;
+
+            // For dual-track: group user+assistant pairs
+            // Skip assistant messages (they'll be shown with their user message)
+            if (isDualTrack && message.role === "assistant") {
+              return null;
+            }
+
+            // Find the corresponding assistant message (translation)
+            let assistantMessage = null;
+            if (isDualTrack && message.role === "user") {
+              assistantMessage = array.find(
+                (m) =>
+                  m.role === "assistant" &&
+                  m.source === message.source &&
+                  m.timestamp > message.timestamp &&
+                  m.timestamp - message.timestamp < 5000 // Within 5 seconds
+              );
+            }
+
+            // For dual-track mode: microphone = right, system_audio = left
+            // For single-track mode: user = right, assistant = left
+            const isRightSide = message.source
+              ? message.source === "microphone"
+              : isUser;
+
+            // Icon selection
+            const getIcon = () => {
+              if (isDualTrack) {
+                if (message.source === "microphone") {
+                  return <MicIcon className="size-3 lg:size-4 text-primary-foreground" />;
+                }
+                if (message.source === "system_audio") {
+                  return <HeadphonesIcon className="size-3 lg:size-4 text-muted-foreground" />;
+                }
+              }
+              // Default icons for single-track mode
+              return isUser ? (
+                <UserIcon className="size-3 lg:size-4 text-primary-foreground" />
+              ) : (
+                <SparklesIcon className="size-3 lg:size-4 text-primary" />
+              );
+            };
+
+            const iconBgClass = isRightSide ? "bg-primary" : "bg-primary/10";
+
             return (
               <div key={message.id}>
                 {/* Date separator */}
@@ -172,14 +222,14 @@ const View = () => {
                 {/* Message */}
                 <div
                   className={`flex gap-3 ${
-                    isUser ? "justify-end" : "justify-start"
+                    isRightSide ? "justify-end" : "justify-start"
                   }`}
                 >
-                  {/* Avatar - Left side for bot */}
-                  {!isUser && (
+                  {/* Avatar - Left side */}
+                  {!isRightSide && (
                     <div className="flex-shrink-0">
-                      <div className="size-7 lg:size-8 rounded-full bg-primary/10 flex items-center justify-center">
-                        <SparklesIcon className="size-3 lg:size-4 text-primary" />
+                      <div className={`size-7 lg:size-8 rounded-full ${iconBgClass} flex items-center justify-center`}>
+                        {getIcon()}
                       </div>
                     </div>
                   )}
@@ -187,33 +237,44 @@ const View = () => {
                   {/* Message content */}
                   <div
                     className={`flex flex-col gap-1 max-w-[70%] ${
-                      isUser ? "items-end" : "items-start"
+                      isRightSide ? "items-end" : "items-start"
                     }`}
                   >
                     <Card
                       className={`px-4 text-xs lg:text-sm py-0 transition-all select-none shadow-none ${
-                        isUser
+                        isRightSide
                           ? "!bg-primary text-primary-foreground !border-primary rounded-tr-sm"
                           : "!bg-muted/50 dark:!bg-muted/30 rounded-tl-sm"
                       }`}
                     >
+                      {/* Original message */}
                       <Markdown>{message.content}</Markdown>
+
+                      {/* Translation (for dual-track mode) */}
+                      {isDualTrack && assistantMessage && (
+                        <>
+                          <div className={`my-2 border-t ${isRightSide ? "border-primary-foreground/20" : "border-border/50"}`} />
+                          <div className="opacity-90">
+                            <Markdown>{assistantMessage.content}</Markdown>
+                          </div>
+                        </>
+                      )}
                     </Card>
                     <Badge
                       variant="outline"
                       className={`text-[10px] lg:text-xs bg-transparent border-none ${
-                        isUser ? "-mr-1" : "-ml-1"
+                        isRightSide ? "-mr-1" : "-ml-1"
                       }`}
                     >
                       {moment(message.timestamp).format("hh:mm A")}
                     </Badge>
                   </div>
 
-                  {/* Avatar - Right side for user */}
-                  {isUser && (
+                  {/* Avatar - Right side */}
+                  {isRightSide && (
                     <div className="flex-shrink-0">
-                      <div className="size-7 lg:size-8 rounded-full bg-primary flex items-center justify-center">
-                        <UserIcon className="size-3 lg:size-4 text-primary-foreground" />
+                      <div className={`size-7 lg:size-8 rounded-full ${iconBgClass} flex items-center justify-center`}>
+                        {getIcon()}
                       </div>
                     </div>
                   )}

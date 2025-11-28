@@ -3,6 +3,7 @@ import {
   AlwaysOnTopToggle,
   AppIconToggle,
   AutostartToggle,
+  SystemAudioSettings,
 } from "./components";
 import { PageLayout } from "@/layouts";
 
@@ -20,6 +21,9 @@ const Settings = () => {
 
       {/* Always On Top Toggle */}
       <AlwaysOnTopToggle />
+
+      {/* System Audio Settings */}
+      <SystemAudioSettings />
     </PageLayout>
   );
 };
