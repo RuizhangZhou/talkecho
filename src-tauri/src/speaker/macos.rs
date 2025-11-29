@@ -1,4 +1,4 @@
-// Pluely macos speaker input and stream
+﻿// TalkEcho macos speaker input and stream
 use anyhow::Result;
 use futures_util::Stream;
 use ringbuf::{
@@ -250,3 +250,4 @@ impl Drop for SpeakerStream {
         self._ctx.should_terminate.store(true, Ordering::Release);
     }
 }
+

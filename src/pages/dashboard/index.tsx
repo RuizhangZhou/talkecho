@@ -1,66 +1,73 @@
-import { useCallback, useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { GetLicense } from "@/components";
-import { PluelyApiSetup, Usage } from "./components";
-import { PageLayout } from "@/layouts";
-import { useApp } from "@/contexts";
+﻿import { PageLayout } from "@/layouts";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 
 const Dashboard = () => {
-  const { hasActiveLicense } = useApp();
-  const [activity, setActivity] = useState<any>(null);
-  const [loadingActivity, setLoadingActivity] = useState(false);
-
-  const fetchActivity = useCallback(async () => {
-    if (!hasActiveLicense) {
-      setActivity({ data: [], total_tokens_used: 0 });
-      return;
-    }
-    setLoadingActivity(true);
-    try {
-      const response = await invoke("get_activity");
-      const responseData: any = response;
-      if (responseData && responseData.success) {
-        setActivity(responseData);
-      } else {
-        setActivity({ data: [], total_tokens_used: 0 });
-      }
-    } catch (error) {
-      setActivity({ data: [], total_tokens_used: 0 });
-    } finally {
-      setLoadingActivity(false);
-    }
-  }, [hasActiveLicense]);
-
-  useEffect(() => {
-    if (hasActiveLicense) {
-      fetchActivity();
-    } else {
-      setActivity(null);
-    }
-  }, [fetchActivity, hasActiveLicense]);
-
-  const activityData =
-    activity && Array.isArray(activity.data) ? activity.data : [];
-  const totalTokens =
-    activity && typeof activity.total_tokens_used === "number"
-      ? activity.total_tokens_used
-      : 0;
-
   return (
     <PageLayout
       title="Dashboard"
-      description="Pluely license to unlock faster responses, quicker support and premium features."
-      rightSlot={!hasActiveLicense ? <GetLicense /> : null}
+      description="TalkEcho Alpha - free for personal use. Bring your own AI/STT keys, no license key required."
     >
-      {/* Pluely API Setup */}
-      <PluelyApiSetup />
+      <div className="grid gap-4">
+        <Card className="shadow-none border border-border/70 rounded-xl">
+          <CardHeader>
+            <CardTitle>Alpha Access</CardTitle>
+            <CardDescription>
+              TalkEcho runs entirely on your device. Audio never leaves your
+              machine unless you explicitly send it to the STT/LLM provider you
+              configure.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm text-muted-foreground">
+            <p>
+              Overlay defaults: translucent, always-on-top window that captures
+              both microphone and system audio for stealth subtitles.
+            </p>
+            <p>
+              Shortcut cheatsheet: <strong>Ctrl+Shift+M</strong> toggles system
+              audio, <strong>Ctrl+Shift+A</strong> toggles mic capture, and
+              <strong>Ctrl+Shift+D</strong> opens this dashboard.
+            </p>
+          </CardContent>
+        </Card>
 
-      <Usage
-        loading={!hasActiveLicense || loadingActivity}
-        onRefresh={fetchActivity}
-        data={activityData}
-        totalTokens={totalTokens}
-      />
+        <Card className="shadow-none border border-border/70 rounded-xl">
+          <CardHeader>
+            <CardTitle>Groq Quickstart</CardTitle>
+            <CardDescription>
+              Configure TalkEcho for "German meeting -> Chinese/English
+              translation" using Groq&apos;s API.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="text-sm text-muted-foreground space-y-2">
+            <ol className="list-decimal space-y-2 pl-5 text-foreground">
+              <li>Create a Groq account and generate an API key.</li>
+              <li>
+                In TalkEcho Settings -> AI Providers, add Groq Llama-3.1 as the
+                completion model and paste your API key.
+              </li>
+              <li>
+                In Speech-to-Text providers, pick Groq Whisper for real-time
+                transcription.
+              </li>
+              <li>
+                Start your meeting, press <strong>Ctrl+Shift+M</strong> +
+                <strong>Ctrl+Shift+A</strong>, then choose the DE -> ZH/EN prompt
+                preset to stream live captions.
+              </li>
+            </ol>
+            <p>
+              Need another provider? Use the same flow to plug in OpenAI,
+              Anthropic, local Ollama endpoints, or any custom curl template.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
     </PageLayout>
   );
 };

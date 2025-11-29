@@ -1,4 +1,4 @@
-import { CartesianGrid, Line, LineChart, XAxis } from "recharts";
+﻿import { CartesianGrid, Line, LineChart, XAxis } from "recharts";
 import {
   Card,
   CardContent,
@@ -57,9 +57,9 @@ export function Usage({
       <CardHeader className="flex flex-row items-stretch border-b !p-0 ">
         <div className="flex flex-row justify-between items-center">
           <div className="flex flex-1 flex-col justify-center gap-1 px-6 pb-0">
-            <CardTitle className="text-md lg:text-lg">Pluely Usage</CardTitle>
+            <CardTitle className="text-md lg:text-lg">TalkEcho Usage</CardTitle>
             <CardDescription className="text-xs lg:text-sm">
-              Your current monthly usage of Pluely's API
+              Your current monthly usage of TalkEcho's API
             </CardDescription>
           </div>
 
@@ -155,3 +155,4 @@ export function Usage({
     </Card>
   );
 }
+

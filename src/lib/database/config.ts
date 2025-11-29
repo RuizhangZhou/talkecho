@@ -1,9 +1,9 @@
-import Database from "@tauri-apps/plugin-sql";
+﻿import Database from "@tauri-apps/plugin-sql";
 
 /**
  * Database configuration
  */
-export const DB_NAME = "sqlite:pluely.db";
+export const DB_NAME = "sqlite:talkecho.db";
 
 let dbInstance: Database | null = null;
 
@@ -24,3 +24,4 @@ export async function getDatabase(): Promise<Database> {
   }
   return dbInstance;
 }
+

@@ -1,4 +1,4 @@
-// Pluely AI Speech Detection, and capture system audio (speaker output) as a stream of f32 samples.
+﻿// TalkEcho AI Speech Detection, and capture system audio (speaker output) as a stream of f32 samples.
 use crate::speaker::SpeakerInput;
 use anyhow::Result;
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
@@ -608,3 +608,4 @@ pub fn get_audio_sample_rate(_app: AppHandle) -> Result<u32, String> {
 
     Ok(sr)
 }
+

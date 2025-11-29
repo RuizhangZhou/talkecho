@@ -1,4 +1,4 @@
-import {
+﻿import {
   deepVariableReplacer,
   getByPath,
   blobToBase64,
@@ -8,10 +8,10 @@ import { invoke } from "@tauri-apps/api/core";
 
 import { TYPE_PROVIDER } from "@/types";
 import curl2Json from "@bany/curl-to-json";
-import { shouldUsePluelyAPI } from "./pluely.api";
+import { shouldUseTalkEchoAPI } from "./talkecho.api";
 
-// Pluely STT function
-async function fetchPluelySTT(audio: File | Blob): Promise<string> {
+// TalkEcho STT function
+async function fetchTalkEchoSTT(audio: File | Blob): Promise<string> {
   try {
     // Convert audio to base64
     const audioBase64 = await blobToBase64(audio);
@@ -32,7 +32,7 @@ async function fetchPluelySTT(audio: File | Blob): Promise<string> {
     }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    return `Pluely STT Error: ${errorMessage}`;
+    return `TalkEcho STT Error: ${errorMessage}`;
   }
 }
 
@@ -54,10 +54,10 @@ export async function fetchSTT(params: STTParams): Promise<string> {
   try {
     const { provider, selectedProvider, audio } = params;
 
-    // Check if we should use Pluely API instead
-    const usePluelyAPI = await shouldUsePluelyAPI();
-    if (usePluelyAPI) {
-      return await fetchPluelySTT(audio);
+    // Check if we should use TalkEcho API instead
+    const useTalkEchoAPI = await shouldUseTalkEchoAPI();
+    if (useTalkEchoAPI) {
+      return await fetchTalkEchoSTT(audio);
     }
 
     if (!provider) throw new Error("Provider not provided");
@@ -238,3 +238,5 @@ export async function fetchSTT(params: STTParams): Promise<string> {
     throw new Error(msg);
   }
 }
+
+

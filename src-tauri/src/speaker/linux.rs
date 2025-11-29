@@ -1,4 +1,4 @@
-// Pluely linux speaker input and stream
+﻿// TalkEcho linux speaker input and stream
 use anyhow::{anyhow, Result};
 use futures_util::Stream;
 use std::collections::VecDeque;
@@ -128,7 +128,7 @@ impl SpeakerStream {
         let init_result: Result<(Simple, u32)> = (|| {
             let simple = Simple::new(
                 None,                   // Use default server
-                "pluely",               // Application name
+                "TalkEcho",               // Application name
                 Direction::Record,      // Record direction
                 source_name.as_deref(), // Source name (monitor)
                 "System Audio Capture", // Stream description
@@ -259,3 +259,4 @@ impl Stream for SpeakerStream {
         Poll::Pending
     }
 }
+

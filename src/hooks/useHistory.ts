@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+﻿import { useState, useEffect, useCallback } from "react";
 import {
   getAllConversations,
   deleteConversation,
@@ -157,7 +157,7 @@ export function useHistory(): UseHistoryReturn {
   const handleAttachToOverlay = (conversationId: string) => {
     // Use localStorage to communicate between windows
     localStorage.setItem(
-      "pluely-conversation-selected",
+      "talkecho-conversation-selected",
       JSON.stringify({ id: conversationId, timestamp: Date.now() })
     );
     setIsAttached(true);
@@ -234,3 +234,4 @@ export function useHistory(): UseHistoryReturn {
     isLoading,
   };
 }
+

@@ -1,4 +1,4 @@
-import { fetchSTT } from "@/lib";
+﻿import { fetchSTT } from "@/lib";
 import { UseCompletionReturn } from "@/types";
 import { useMicVAD } from "@ricky0123/vad-react";
 import { LoaderCircleIcon, MicIcon, MicOffIcon } from "lucide-react";
@@ -6,7 +6,7 @@ import { useState } from "react";
 import { Button } from "@/components";
 import { useApp } from "@/contexts";
 import { floatArrayToWav } from "@/lib/utils";
-import { shouldUsePluelyAPI } from "@/lib/functions/pluely.api";
+import { shouldUseTalkEchoAPI } from "@/lib/functions/talkecho.api";
 
 interface AutoSpeechVADProps {
   submit: UseCompletionReturn["submit"];
@@ -38,10 +38,10 @@ const AutoSpeechVADInternal = ({
         const audioBlob = floatArrayToWav(audio, 16000, "wav");
 
         let transcription: string;
-        const usePluelyAPI = await shouldUsePluelyAPI();
+        const useTalkEchoAPI = await shouldUseTalkEchoAPI();
 
         // Check if we have a configured speech provider
-        if (!selectedSttProvider.provider && !usePluelyAPI) {
+        if (!selectedSttProvider.provider && !useTalkEchoAPI) {
           console.warn("No speech provider selected");
           setState((prev: any) => ({
             ...prev,
@@ -55,7 +55,7 @@ const AutoSpeechVADInternal = ({
           (p) => p.id === selectedSttProvider.provider
         );
 
-        if (!providerConfig && !usePluelyAPI) {
+        if (!providerConfig && !useTalkEchoAPI) {
           console.warn("Selected speech provider configuration not found");
           setState((prev: any) => ({
             ...prev,
@@ -69,7 +69,7 @@ const AutoSpeechVADInternal = ({
 
         // Use the fetchSTT function for all providers
         transcription = await fetchSTT({
-          provider: usePluelyAPI ? undefined : providerConfig,
+          provider: useTalkEchoAPI ? undefined : providerConfig,
           selectedProvider: selectedSttProvider,
           audio: audioBlob,
         });
@@ -122,3 +122,5 @@ const AutoSpeechVADInternal = ({
 export const AutoSpeechVAD = (props: AutoSpeechVADProps) => {
   return <AutoSpeechVADInternal key={props.microphoneDeviceId} {...props} />;
 };
+
+

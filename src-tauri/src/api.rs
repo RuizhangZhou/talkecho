@@ -1,4 +1,4 @@
-use base64::{engine::general_purpose, Engine as _};
+﻿use base64::{engine::general_purpose, Engine as _};
 use futures_util::StreamExt;
 use reqwest::multipart::{Form, Part};
 use reqwest::Url;
@@ -48,7 +48,7 @@ fn get_secure_storage_path(app: &AppHandle) -> Result<PathBuf, String> {
 struct SecureStorage {
     license_key: Option<String>,
     instance_id: Option<String>,
-    selected_pluely_model: Option<String>,
+    selected_talkecho_model: Option<String>,
 }
 
 pub async fn get_stored_credentials(
@@ -74,7 +74,7 @@ pub async fn get_stored_credentials(
         .ok_or("Instance ID not found".to_string())?;
 
     let selected_model: Option<Model> = storage
-        .selected_pluely_model
+        .selected_talkecho_model
         .and_then(|json_str| serde_json::from_str(&json_str).ok());
 
     Ok((license_key, instance_id, selected_model))
@@ -1064,3 +1064,4 @@ pub async fn get_activity(app: AppHandle) -> Result<serde_json::Value, String> {
         .await
         .map_err(|e| format!("Failed to parse activity response: {}", e))
 }
+

@@ -1,21 +1,20 @@
 {
-  "name": "pluely",
+  "name": "talkecho",
   "private": false,
   "version": "0.1.8",
-  "description": "The Open Source Alternative to Cluely - A lightning-fast, privacy-first AI assistant that works seamlessly during meetings, interviews, and conversations without anyone knowing.",
+  "description": "TalkEcho - an invisible desktop subtitle & translation copilot forked from Pluely.",
   "author": {
-    "name": "Srikanth Nani",
-    "email": "srikanthnani1202@gmail.com",
-    "url": "https://www.srikanthnani.com"
+    "name": "Ruizhang Zhou",
+    "email": "support@talkecho.com"
   },
   "license": "GPL-3.0",
-  "homepage": "https://github.com/iamsrikanthnani/pluely#readme",
+  "homepage": "https://github.com/ruizhangzhou/talkecho#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/iamsrikanthnani/pluely.git"
+    "url": "git+https://github.com/ruizhangzhou/talkecho.git"
   },
   "bugs": {
-    "url": "https://github.com/iamsrikanthnani/pluely/issues"
+    "url": "https://github.com/ruizhangzhou/talkecho/issues"
   },
   "keywords": [
     "ai-assistant",

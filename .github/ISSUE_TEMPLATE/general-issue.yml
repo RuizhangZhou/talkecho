@@ -2,7 +2,7 @@ name: ❓ General Issue
 description: For questions, discussions, or issues that don't fit other categories
 title: "[GENERAL] "
 labels: ["question"]
-assignees: "iamsrikanthnani"
+assignees: "ruizhangzhou"
 body:
   - type: markdown
     attributes:

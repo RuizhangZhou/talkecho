@@ -1,7 +1,7 @@
-import { useState, useRef, useEffect } from "react";
+﻿import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components";
 import { AudioVisualizer } from "@/pages/app/components/speech/audio-visualizer";
-import { shouldUsePluelyAPI, fetchSTT } from "@/lib";
+import { shouldUseTalkEchoAPI, fetchSTT } from "@/lib";
 import { useApp } from "@/contexts";
 import { StopCircle, Send } from "lucide-react";
 
@@ -107,13 +107,13 @@ export const AudioRecorder = ({
     try {
       const audioBlob = new Blob(chunks, { type: mimeType });
 
-      const usePluelyAPI = await shouldUsePluelyAPI();
+      const useTalkEchoAPI = await shouldUseTalkEchoAPI();
       const provider = allSttProviders.find(
         (p) => p.id === selectedSttProvider.provider
       );
 
       const text = await fetchSTT({
-        provider: usePluelyAPI ? undefined : provider,
+        provider: useTalkEchoAPI ? undefined : provider,
         selectedProvider: selectedSttProvider,
         audio: audioBlob,
       });
@@ -178,3 +178,4 @@ export const AudioRecorder = ({
     </div>
   );
 };
+

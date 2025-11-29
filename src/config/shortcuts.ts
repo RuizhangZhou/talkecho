@@ -1,4 +1,4 @@
-import { ShortcutAction } from "@/types";
+﻿import { ShortcutAction } from "@/types";
 
 export const DEFAULT_SHORTCUT_ACTIONS: ShortcutAction[] = [
   {
@@ -24,7 +24,7 @@ export const DEFAULT_SHORTCUT_ACTIONS: ShortcutAction[] = [
   {
     id: "focus_input",
     name: "Refocus Input Box",
-    description: "Bring Pluely forward and place the cursor in the input area",
+    description: "Bring TalkEcho forward and place the cursor in the input area",
     defaultKey: {
       macos: "cmd+shift+i",
       windows: "ctrl+shift+i",
@@ -72,3 +72,4 @@ export const DEFAULT_SHORTCUT_ACTIONS: ShortcutAction[] = [
     },
   },
 ];
+

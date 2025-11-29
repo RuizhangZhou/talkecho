@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import { Button, Card } from "@/components";
 import { CheckCircle2Icon, LoaderIcon, ShieldAlertIcon } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
@@ -134,7 +134,7 @@ export const PermissionFlow = ({
                     Select <strong>Screen & System Audio Recording</strong>
                   </li>
                   <li>
-                    Find <strong>Pluely</strong> and enable it
+                    Find <strong>TalkEcho</strong> and enable it
                   </li>
                   <li className="font-semibold text-orange-900">
                     Return here - we'll detect it automatically!
@@ -168,7 +168,7 @@ export const PermissionFlow = ({
                   Permission Required
                 </h3>
                 <p className="text-xs text-red-800 leading-relaxed mb-3">
-                  Pluely needs permission to capture system audio. This is
+                  TalkEcho needs permission to capture system audio. This is
                   required for the system audio feature to work.
                 </p>
 
@@ -197,12 +197,12 @@ export const PermissionFlow = ({
                         <strong>Screen & System Audio Recording</strong>
                       </li>
                       <li>
-                        Find <strong>Pluely</strong> in the list
+                        Find <strong>TalkEcho</strong> in the list
                       </li>
                       <li>
                         Toggle the switch to <strong>ON</strong>
                       </li>
-                      <li>Restart Pluely if needed</li>
+                      <li>Restart TalkEcho if needed</li>
                     </ol>
                   </details>
                 </div>
@@ -215,3 +215,4 @@ export const PermissionFlow = ({
 
   return <div className="space-y-4">{renderContent()}</div>;
 };
+

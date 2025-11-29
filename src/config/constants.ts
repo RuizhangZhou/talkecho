@@ -1,4 +1,4 @@
-// Storage keys
+﻿// Storage keys
 export const STORAGE_KEYS = {
   THEME: "theme",
   TRANSPARENCY: "transparency",
@@ -14,7 +14,7 @@ export const STORAGE_KEYS = {
   SYSTEM_AUDIO_QUICK_ACTIONS: "system_audio_quick_actions",
   SYSTEM_AUDIO_INCLUDE_MICROPHONE: "system_audio_include_microphone",
   CUSTOMIZABLE: "customizable",
-  PLUELY_API_ENABLED: "pluely_api_enabled",
+  TALKECHO_API_ENABLED: "talkecho_api_enabled",
   SHORTCUTS: "shortcuts",
   AUTOSTART_INITIALIZED: "autostart_initialized",
 
@@ -36,3 +36,4 @@ export const DEFAULT_QUICK_ACTIONS = [
   "Fact-check",
   "Recap",
 ];
+

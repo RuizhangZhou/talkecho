@@ -1,4 +1,4 @@
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
+﻿// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 mod activate;
 mod api;
 mod capture;
@@ -36,7 +36,7 @@ pub fn run() {
     let mut builder = tauri::Builder::default()
         .plugin(
             tauri_plugin_sql::Builder::default()
-                .add_migrations("sqlite:pluely.db", db::migrations())
+                .add_migrations("sqlite:talkecho.db", db::migrations())
                 .build(),
         )
         .manage(AudioState::default())
@@ -253,3 +253,4 @@ fn init(app_handle: &AppHandle) {
 
     panel.set_delegate(delegate);
 }
+

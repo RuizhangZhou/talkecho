@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+﻿import { useState, useEffect } from "react";
 import {
   Download,
   RefreshCw,
@@ -270,7 +270,7 @@ export const Updater = () => {
             <p className="text-xs text-muted-foreground">
               Having trouble downloading?{" "}
               <a
-                href={"https://pluely.com/downloads?ref=pluely-app"}
+                href={"https://talkecho.com/downloads?ref=talkecho-app"}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-blue-600 hover:text-blue-700 underline inline-flex items-center gap-1"
@@ -285,3 +285,4 @@ export const Updater = () => {
     </Popover>
   );
 };
+

@@ -1,4 +1,4 @@
-import { SparklesIcon } from "lucide-react";
+﻿import { SparklesIcon } from "lucide-react";
 import { Button } from "@/components";
 import { cn } from "@/lib/utils";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -23,7 +23,7 @@ export const Sidebar = () => {
         </div>
         <div className="flex flex-col">
           <h1 className="text-xs lg:text-md font-semibold text-foreground transition-all duration-300">
-            Pluely
+            TalkEcho
           </h1>
           <span className="text-[8px] lg:text-[10px] text-muted-foreground -mt-1 block">
             {isLoading ? "Loading..." : `(v${version})`}
@@ -93,3 +93,4 @@ export const Sidebar = () => {
     </aside>
   );
 };
+

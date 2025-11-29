@@ -1,4 +1,4 @@
-import { InfoIcon, MicIcon } from "lucide-react";
+﻿import { InfoIcon, MicIcon } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger, Button } from "@/components";
 import { useApp } from "@/contexts";
 
@@ -17,8 +17,8 @@ export const ChatAudio = ({
   setIsRecording,
   disabled,
 }: ChatAudioProps) => {
-  const { selectedSttProvider, pluelyApiEnabled } = useApp();
-  const isProviderConfigured = pluelyApiEnabled || selectedSttProvider.provider;
+  const { selectedSttProvider, talkechoApiEnabled } = useApp();
+  const isProviderConfigured = talkechoApiEnabled || selectedSttProvider.provider;
 
   const handleMicClick = () => {
     if (!isProviderConfigured) {
@@ -72,3 +72,4 @@ export const ChatAudio = ({
     </Popover>
   );
 };
+

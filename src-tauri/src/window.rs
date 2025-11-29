@@ -1,4 +1,4 @@
-#[cfg(target_os = "macos")]
+﻿#[cfg(target_os = "macos")]
 use tauri::LogicalPosition;
 use tauri::{App, AppHandle, Manager, Runtime, WebviewWindow, WebviewWindowBuilder};
 
@@ -10,7 +10,7 @@ pub fn setup_main_window(app: &mut App) -> Result<(), Box<dyn std::error::Error>
     // Try different possible window labels
     let window = app
         .get_webview_window("main")
-        .or_else(|| app.get_webview_window("pluely"))
+        .or_else(|| app.get_webview_window("TalkEcho"))
         .or_else(|| {
             // Get the first window if specific labels don't work
             app.webview_windows().values().next().cloned()
@@ -171,7 +171,7 @@ pub fn create_dashboard_window<R: Runtime>(
 
     #[cfg(target_os = "macos")]
     let base_builder = base_builder
-        .title("Pluely - Dashboard")
+        .title("TalkEcho - Dashboard")
         .center()
         .decorations(true)
         .inner_size(1200.0, 800.0)
@@ -184,7 +184,7 @@ pub fn create_dashboard_window<R: Runtime>(
 
     #[cfg(not(target_os = "macos"))]
     let base_builder = base_builder
-        .title("Pluely - Dashboard")
+        .title("TalkEcho - Dashboard")
         .center()
         .decorations(true)
         .inner_size(1000.0, 700.0)
@@ -195,3 +195,4 @@ pub fn create_dashboard_window<R: Runtime>(
 
     base_builder.build()
 }
+

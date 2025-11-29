@@ -1,4 +1,4 @@
-import { InfoIcon, MicIcon } from "lucide-react";
+﻿import { InfoIcon, MicIcon } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger, Button } from "@/components";
 import { AutoSpeechVAD } from "./AutoSpeechVad";
 import { UseCompletionReturn } from "@/types";
@@ -12,7 +12,7 @@ export const Audio = ({
   submit,
   setState,
 }: UseCompletionReturn) => {
-  const { selectedSttProvider, pluelyApiEnabled, selectedAudioDevices } =
+  const { selectedSttProvider, talkechoApiEnabled, selectedAudioDevices } =
     useApp();
 
   const speechProviderStatus = selectedSttProvider.provider;
@@ -20,7 +20,7 @@ export const Audio = ({
   return (
     <Popover open={micOpen} onOpenChange={setMicOpen}>
       <PopoverTrigger asChild>
-        {(pluelyApiEnabled || speechProviderStatus) && enableVAD ? (
+        {(talkechoApiEnabled || speechProviderStatus) && enableVAD ? (
           <AutoSpeechVAD
             key={selectedAudioDevices.input}
             submit={submit}
@@ -46,7 +46,7 @@ export const Audio = ({
         align="end"
         side="bottom"
         className={`w-80 p-3 ${
-          pluelyApiEnabled || speechProviderStatus ? "hidden" : ""
+          talkechoApiEnabled || speechProviderStatus ? "hidden" : ""
         }`}
         sideOffset={8}
       >
@@ -76,3 +76,4 @@ export const Audio = ({
     </Popover>
   );
 };
+

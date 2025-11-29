@@ -1,4 +1,4 @@
-import { Dispatch, SetStateAction } from "react";
+﻿import { Dispatch, SetStateAction } from "react";
 import { ScreenshotConfig, TYPE_PROVIDER } from "@/types";
 import { CursorType, CustomizableState } from "@/lib/storage";
 
@@ -32,16 +32,14 @@ export type IContextType = {
     variables: Record<string, string>;
   }) => void;
   screenshotConfiguration: ScreenshotConfig;
-  setScreenshotConfiguration: React.Dispatch<
-    React.SetStateAction<ScreenshotConfig>
-  >;
+  setScreenshotConfiguration: Dispatch<SetStateAction<ScreenshotConfig>>;
   customizable: CustomizableState;
   toggleAppIconVisibility: (isVisible: boolean) => Promise<void>;
   toggleAlwaysOnTop: (isEnabled: boolean) => Promise<void>;
   toggleAutostart: (isEnabled: boolean) => Promise<void>;
   loadData: () => void;
-  pluelyApiEnabled: boolean;
-  setPluelyApiEnabled: (enabled: boolean) => void;
+  talkEchoApiEnabled: boolean;
+  setTalkEchoApiEnabled: (enabled: boolean) => void;
   hasActiveLicense: boolean;
   setHasActiveLicense: Dispatch<SetStateAction<boolean>>;
   getActiveLicenseStatus: () => Promise<void>;
@@ -57,3 +55,4 @@ export type IContextType = {
   >;
   setCursorType: (type: CursorType) => void;
 };
+

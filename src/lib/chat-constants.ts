@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Chat and Conversation Constants
  *
  * Centralized constants for chat functionality to replace magic numbers
@@ -31,7 +31,7 @@ export const CONVERSATION_SAVE_DEBOUNCE_MS = 500;
 /**
  * CHUNK_POLL_INTERVAL_MS
  *
- * How frequently to check for new streaming chunks from Pluely API.
+ * How frequently to check for new streaming chunks from TalkEcho API.
  *
  * 50ms provides smooth streaming without excessive CPU usage.
  * Lower = more responsive but higher CPU usage
@@ -139,3 +139,4 @@ export function isValidConversationId(id: string): boolean {
 export function isValidMessageId(id: string): boolean {
   return /^msg_\d+_(user|assistant|system)$/.test(id);
 }
+

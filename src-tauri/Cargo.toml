@@ -1,12 +1,12 @@
-[package]
-name = "pluely"
+﻿[package]
+name = "talkecho"
 version = "0.1.8"
-description = "The Open Source Alternative to Cluely - A lightning-fast, privacy-first AI assistant that works seamlessly during meetings, interviews, and conversations without anyone knowing."
-authors = ["Srikanth Nani <srikanthnani1202@gmail.com>"]
+description = "TalkEcho - invisible real-time meeting captions & translation (forked from Pluely)."
+authors = ["Ruizhang Zhou <support@talkecho.com>"]
 license = "GPL-3.0"
-repository = "https://github.com/iamsrikanthnani/pluely"
-homepage = "https://github.com/iamsrikanthnani/pluely"
-documentation = "https://github.com/iamsrikanthnani/pluely/wiki"
+repository = "https://github.com/ruizhangzhou/talkecho"
+homepage = "https://github.com/ruizhangzhou/talkecho"
+documentation = "https://github.com/ruizhangzhou/talkecho/wiki"
 readme = "../README.md"
 keywords = ["ai-assistant", "tauri", "desktop-app", "privacy-first", "meeting-assistant"]
 categories = ["gui", "multimedia", "accessibility", "science", "development-tools"]
@@ -18,7 +18,7 @@ edition = "2021"
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
-name = "pluely_lib"
+name = "talkecho_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -67,3 +67,4 @@ libpulse-simple-binding = "2.29.0"
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-autostart = "2.5.0"
+

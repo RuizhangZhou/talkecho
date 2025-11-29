@@ -1,4 +1,4 @@
-import {
+﻿import {
   Header,
   Select,
   SelectContent,
@@ -23,7 +23,7 @@ export const CursorSelection = ({ className }: CursorSelectionProps) => {
     <div id="cursor" className={`space-y-2 ${className}`}>
       <Header
         title="Cursor"
-        description="Control pluely cursor visibility"
+        description="Control talkecho cursor visibility"
         isMainTitle
         rightSlot={
           <Select
@@ -58,3 +58,4 @@ export const CursorSelection = ({ className }: CursorSelectionProps) => {
     </div>
   );
 };
+

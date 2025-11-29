@@ -1,4 +1,4 @@
-import { Button } from "@/components";
+﻿import { Button } from "@/components";
 import { useState } from "react";
 import { ArrowDownIcon, ArrowUpIcon } from "lucide-react";
 
@@ -15,19 +15,19 @@ const osInstructions: Record<string, Instructions> = {
   macos: {
     title: "System Audio Permission Required",
     description:
-      "Pluely needs permission to capture your screen's audio. Clicking the button will open System Settings.",
+      "TalkEcho needs permission to capture your screen's audio. Clicking the button will open System Settings.",
     buttonText: "Open System Settings",
     manualTitle: "If permission is not granted automatically:",
     manualSteps:
-      "1. Go to System Settings > Privacy & Security > Screen & System Audio Recording.\n2. Find Pluely in the list and enable it, if not found then click on + and add Pluely.",
-    note: "A restart of Pluely may be required after granting permission.",
+      "1. Go to System Settings > Privacy & Security > Screen & System Audio Recording.\n2. Find TalkEcho in the list and enable it, if not found then click on + and add TalkEcho.",
+    note: "A restart of TalkEcho may be required after granting permission.",
   },
   windows: {
     title: "System Audio Access",
     description:
-      "Pluely needs to access your system audio. The button below will open the Sound settings panel for troubleshooting.",
+      "TalkEcho needs to access your system audio. The button below will open the Sound settings panel for troubleshooting.",
     buttonText: "Open Sound Settings",
-    manualTitle: "To ensure Pluely can capture audio:",
+    manualTitle: "To ensure TalkEcho can capture audio:",
     manualSteps:
       "1. In Sound settings, ensure the correct speakers are set as the default device.\n2. Check your device properties and disable any 'Exclusive Mode' settings.",
     note: "Windows does not require a specific permission prompt for audio capture.",
@@ -35,7 +35,7 @@ const osInstructions: Record<string, Instructions> = {
   linux: {
     title: "System Audio Setup",
     description:
-      "Pluely captures audio using PulseAudio. Please ensure it is configured correctly.",
+      "TalkEcho captures audio using PulseAudio. Please ensure it is configured correctly.",
     buttonText: "Setup Instructions",
     manualTitle: "Troubleshooting Steps:",
     manualSteps:
@@ -44,11 +44,11 @@ const osInstructions: Record<string, Instructions> = {
   },
   undetermined: {
     title: "System Audio Permission",
-    description: "Pluely needs permission to capture system audio.",
+    description: "TalkEcho needs permission to capture system audio.",
     buttonText: "Grant Permission",
     manualTitle: "Manual Setup:",
     manualSteps:
-      "Please check your system's privacy or sound settings to allow Pluely to capture audio.",
+      "Please check your system's privacy or sound settings to allow TalkEcho to capture audio.",
   },
 };
 
@@ -137,3 +137,4 @@ export const SetupInstructions = ({
     </div>
   );
 };
+

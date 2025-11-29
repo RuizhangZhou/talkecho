@@ -1,4 +1,4 @@
-use crate::api::get_stored_credentials;
+﻿use crate::api::get_stored_credentials;
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
@@ -47,7 +47,7 @@ fn get_secure_storage_path(app: &AppHandle) -> Result<PathBuf, String> {
 struct SecureStorage {
     license_key: Option<String>,
     instance_id: Option<String>,
-    selected_pluely_model: Option<String>,
+    selected_talkecho_model: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -60,7 +60,7 @@ pub struct StorageItem {
 pub struct StorageResult {
     license_key: Option<String>,
     instance_id: Option<String>,
-    selected_pluely_model: Option<String>,
+    selected_talkecho_model: Option<String>,
 }
 
 #[tauri::command]
@@ -77,9 +77,9 @@ pub async fn secure_storage_save(app: AppHandle, items: Vec<StorageItem>) -> Res
 
     for item in items {
         match item.key.as_str() {
-            "pluely_license_key" => storage.license_key = Some(item.value),
-            "pluely_instance_id" => storage.instance_id = Some(item.value),
-            "selected_pluely_model" => storage.selected_pluely_model = Some(item.value),
+            "talkecho_license_key" => storage.license_key = Some(item.value),
+            "talkecho_instance_id" => storage.instance_id = Some(item.value),
+            "selected_talkecho_model" => storage.selected_talkecho_model = Some(item.value),
             _ => return Err(format!("Invalid storage key: {}", item.key)),
         }
     }
@@ -101,7 +101,7 @@ pub async fn secure_storage_get(app: AppHandle) -> Result<StorageResult, String>
         return Ok(StorageResult {
             license_key: None,
             instance_id: None,
-            selected_pluely_model: None,
+            selected_talkecho_model: None,
         });
     }
 
@@ -114,7 +114,7 @@ pub async fn secure_storage_get(app: AppHandle) -> Result<StorageResult, String>
     Ok(StorageResult {
         license_key: storage.license_key,
         instance_id: storage.instance_id,
-        selected_pluely_model: storage.selected_pluely_model,
+        selected_talkecho_model: storage.selected_talkecho_model,
     })
 }
 
@@ -134,9 +134,9 @@ pub async fn secure_storage_remove(app: AppHandle, keys: Vec<String>) -> Result<
 
     for key in keys {
         match key.as_str() {
-            "pluely_license_key" => storage.license_key = None,
-            "pluely_instance_id" => storage.instance_id = None,
-            "selected_pluely_model" => storage.selected_pluely_model = None,
+            "talkecho_license_key" => storage.license_key = None,
+            "talkecho_instance_id" => storage.instance_id = None,
+            "selected_talkecho_model" => storage.selected_talkecho_model = None,
             _ => return Err(format!("Invalid storage key: {}", key)),
         }
     }
@@ -377,3 +377,4 @@ pub async fn get_checkout_url() -> Result<CheckoutResponse, String> {
     })?;
     Ok(checkout_response)
 }
+

@@ -1,4 +1,4 @@
-import {
+﻿import {
   AI_PROVIDERS,
   DEFAULT_SYSTEM_PROMPT,
   SPEECH_TO_TEXT_PROVIDERS,
@@ -120,29 +120,15 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const [customizable, setCustomizable] = useState<CustomizableState>(
     DEFAULT_CUSTOMIZABLE_STATE
   );
-  const [hasActiveLicense, setHasActiveLicense] = useState<boolean>(false);
+  const [hasActiveLicense, setHasActiveLicense] = useState<boolean>(true);
 
-  // Pluely API State
-  const [pluelyApiEnabled, setPluelyApiEnabledState] = useState<boolean>(
-    safeLocalStorage.getItem(STORAGE_KEYS.PLUELY_API_ENABLED) === "true"
+  // TalkEcho API State
+  const [talkEchoApiEnabled, setTalkEchoApiEnabledState] = useState<boolean>(
+    safeLocalStorage.getItem(STORAGE_KEYS.TALKECHO_API_ENABLED) === "true"
   );
 
   const getActiveLicenseStatus = async () => {
-    const response: { is_active: boolean } = await invoke(
-      "validate_license_api"
-    );
-    setHasActiveLicense(response.is_active);
-    // Check if the auto configs are enabled
-    const autoConfigsEnabled = localStorage.getItem("auto-configs-enabled");
-    if (response.is_active && !autoConfigsEnabled) {
-      setScreenshotConfiguration({
-        mode: "auto",
-        autoPrompt: "Analyze the screenshot and provide insights",
-        enabled: false,
-      });
-      // Set the flag to true so that we don't change the mode again
-      localStorage.setItem("auto-configs-enabled", "true");
-    }
+    setHasActiveLicense(true);
   };
 
   useEffect(() => {
@@ -251,12 +237,12 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       }
     }
 
-    // Load Pluely API enabled state
-    const savedPluelyApiEnabled = safeLocalStorage.getItem(
-      STORAGE_KEYS.PLUELY_API_ENABLED
+    // Load TalkEcho API enabled state
+    const savedTalkEchoApiEnabled = safeLocalStorage.getItem(
+      STORAGE_KEYS.TALKECHO_API_ENABLED
     );
-    if (savedPluelyApiEnabled !== null) {
-      setPluelyApiEnabledState(savedPluelyApiEnabled === "true");
+    if (savedTalkEchoApiEnabled !== null) {
+      setTalkEchoApiEnabledState(savedTalkEchoApiEnabled === "true");
     }
   };
 
@@ -518,9 +504,9 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     loadData();
   };
 
-  const setPluelyApiEnabled = (enabled: boolean) => {
-    setPluelyApiEnabledState(enabled);
-    safeLocalStorage.setItem(STORAGE_KEYS.PLUELY_API_ENABLED, String(enabled));
+  const setTalkEchoApiEnabled = (enabled: boolean) => {
+    setTalkEchoApiEnabledState(enabled);
+    safeLocalStorage.setItem(STORAGE_KEYS.TALKECHO_API_ENABLED, String(enabled));
     loadData();
   };
 
@@ -543,8 +529,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     toggleAlwaysOnTop,
     toggleAutostart,
     loadData,
-    pluelyApiEnabled,
-    setPluelyApiEnabled,
+    talkEchoApiEnabled,
+    setTalkEchoApiEnabled,
     hasActiveLicense,
     setHasActiveLicense,
     getActiveLicenseStatus,
@@ -566,3 +552,8 @@ export const useApp = () => {
 
   return context;
 };
+
+
+
+
+

@@ -1,4 +1,4 @@
-use anyhow::Result;
+﻿use anyhow::Result;
 use futures_util::Stream;
 use std::pin::Pin;
 
@@ -22,7 +22,7 @@ mod commands;
 // Re-export commands for tauri handler
 pub use commands::*;
 
-// Pluely speaker input and stream
+// TalkEcho speaker input and stream
 pub struct SpeakerInput {
     #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
     inner: PlatformSpeakerInput,
@@ -104,3 +104,4 @@ impl SpeakerStream {
         0
     }
 }
+

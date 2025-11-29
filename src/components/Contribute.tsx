@@ -1,4 +1,4 @@
-import { Button, Card, CardContent, CardDescription, CardTitle } from "./ui";
+﻿import { Button, Card, CardContent, CardDescription, CardTitle } from "./ui";
 
 const Contribute = () => {
   return (
@@ -6,21 +6,21 @@ const Contribute = () => {
       <CardContent className="flex flex-col gap-4 p-4 py-0 md:flex-row md:items-center md:justify-between">
         <div className="space-y-2 md:max-w-[70%]">
           <CardTitle className="text-xs lg:text-sm">
-            Contribute to Pluely, Earn Lifetime Access
+            Contribute to TalkEcho, Earn Lifetime Access
           </CardTitle>
           <CardDescription className="text-[10px] lg:text-xs">
             Fix a listed critical issue and earn a lifetime Dev Pro license
             valued at $120. Only issues on our contribute page qualify. read
-            more at pluely.com/contribute
+            more at talkecho.com/contribute
           </CardDescription>
         </div>
         <Button asChild className="w-full md:w-auto text-[10px] lg:text-xs">
           <a
-            href="https://pluely.com/contribute"
+            href="https://talkecho.com/contribute"
             rel="noopener noreferrer"
             target="_blank"
           >
-            pluely.com/contribute
+            talkecho.com/contribute
           </a>
         </Button>
       </CardContent>

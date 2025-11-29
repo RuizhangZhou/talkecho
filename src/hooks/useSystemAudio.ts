@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+﻿import { useEffect, useState, useCallback, useRef } from "react";
 import { useWindowResize, useGlobalShortcuts } from ".";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -12,7 +12,7 @@ import {
 } from "@/config";
 import {
   safeLocalStorage,
-  shouldUsePluelyAPI,
+  shouldUseTalkEchoAPI,
   generateConversationTitle,
   saveConversation,
   CONVERSATION_SAVE_DEBOUNCE_MS,
@@ -146,7 +146,7 @@ export function useSystemAudio() {
     },
   });
 
-  // Control microphone VAD based on includeMicrophone and capturing状态
+  // Control microphone VAD based on includeMicrophone and capturingçŠ¶æ€
   useEffect(() => {
     if (includeMicrophone && capturing) {
       // Start microphone VAD
@@ -300,8 +300,8 @@ export function useSystemAudio() {
             }
             const audioBlob = new Blob([bytes], { type: "audio/wav" });
 
-            const usePluelyAPI = await shouldUsePluelyAPI();
-            if (!selectedSttProvider.provider && !usePluelyAPI) {
+            const useTalkEchoAPI = await shouldUseTalkEchoAPI();
+            if (!selectedSttProvider.provider && !useTalkEchoAPI) {
               setError("No speech provider selected.");
               return;
             }
@@ -310,7 +310,7 @@ export function useSystemAudio() {
               (p) => p.id === selectedSttProvider.provider
             );
 
-            if (!providerConfig && !usePluelyAPI) {
+            if (!providerConfig && !useTalkEchoAPI) {
               setError("Speech provider config not found.");
               return;
             }
@@ -531,8 +531,8 @@ export function useSystemAudio() {
         // Convert Float32Array to WAV blob
         const audioBlob = floatArrayToWav(audioData, 16000, "wav");
 
-        const usePluelyAPI = await shouldUsePluelyAPI();
-        if (!selectedSttProvider.provider && !usePluelyAPI) {
+        const useTalkEchoAPI = await shouldUseTalkEchoAPI();
+        if (!selectedSttProvider.provider && !useTalkEchoAPI) {
           setError("No speech provider selected.");
           return;
         }
@@ -541,7 +541,7 @@ export function useSystemAudio() {
           (p) => p.id === selectedSttProvider.provider
         );
 
-        if (!providerConfig && !usePluelyAPI) {
+        if (!providerConfig && !useTalkEchoAPI) {
           setError("Speech provider config not found.");
           return;
         }
@@ -563,7 +563,7 @@ export function useSystemAudio() {
           ? systemPrompt || DEFAULT_SYSTEM_PROMPT
           : contextContent || DEFAULT_SYSTEM_PROMPT;
 
-        if (!selectedAIProvider.provider && !usePluelyAPI) {
+        if (!selectedAIProvider.provider && !useTalkEchoAPI) {
           setError("No AI provider selected.");
           return;
         }
@@ -571,7 +571,7 @@ export function useSystemAudio() {
         const aiProvider = allAiProviders.find(
           (p) => p.id === selectedAIProvider.provider
         );
-        if (!aiProvider && !usePluelyAPI) {
+        if (!aiProvider && !useTalkEchoAPI) {
           setError("AI provider config not found.");
           return;
         }
@@ -579,7 +579,7 @@ export function useSystemAudio() {
         let fullResponse = "";
         try {
           for await (const chunk of fetchAIResponse({
-            provider: usePluelyAPI ? undefined : aiProvider,
+            provider: useTalkEchoAPI ? undefined : aiProvider,
             selectedProvider: selectedAIProvider,
             systemPrompt: effectiveSystemPrompt,
             history: [], // No history for independent translation
@@ -665,8 +665,8 @@ export function useSystemAudio() {
 
         let fullResponse = "";
 
-        const usePluelyAPI = await shouldUsePluelyAPI();
-        if (!selectedAIProvider.provider && !usePluelyAPI) {
+        const useTalkEchoAPI = await shouldUseTalkEchoAPI();
+        if (!selectedAIProvider.provider && !useTalkEchoAPI) {
           setError("No AI provider selected.");
           return;
         }
@@ -674,14 +674,14 @@ export function useSystemAudio() {
         const provider = allAiProviders.find(
           (p) => p.id === selectedAIProvider.provider
         );
-        if (!provider && !usePluelyAPI) {
+        if (!provider && !useTalkEchoAPI) {
           setError("AI provider config not found.");
           return;
         }
 
         try {
           for await (const chunk of fetchAIResponse({
-            provider: usePluelyAPI ? undefined : provider,
+            provider: useTalkEchoAPI ? undefined : provider,
             selectedProvider: selectedAIProvider,
             systemPrompt: prompt,
             history: previousMessages,
@@ -705,14 +705,14 @@ export function useSystemAudio() {
                 role: "user" as const,
                 content: transcription,
                 timestamp,
-                source: "system_audio" as const, // 标记为系统音频
+                source: "system_audio" as const, // æ ‡è®°ä¸ºç³»ç»ŸéŸ³é¢‘
               },
               {
                 id: generateMessageId("assistant", timestamp + 1),
                 role: "assistant" as const,
                 content: fullResponse,
                 timestamp: timestamp + 1,
-                source: "system_audio" as const, // 标记为系统音频
+                source: "system_audio" as const, // æ ‡è®°ä¸ºç³»ç»ŸéŸ³é¢‘
               },
               ...prev.messages,
             ],
@@ -1143,3 +1143,4 @@ export function useSystemAudio() {
     micVAD,
   };
 }
+
