@@ -1,5 +1,5 @@
 import { ChatConversation } from "@/types";
-import { Button, Card } from "@/components";
+import { Button, Card, Markdown } from "@/components";
 import {
   BotIcon,
   ChevronDownIcon,

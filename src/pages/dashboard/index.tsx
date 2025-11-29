@@ -40,7 +40,7 @@ const Dashboard = () => {
           <CardHeader>
             <CardTitle>Groq Quickstart</CardTitle>
             <CardDescription>
-              Configure TalkEcho for "German meeting -> Chinese/English
+              Configure TalkEcho for "German meeting -&gt; Chinese/English
               translation" using Groq&apos;s API.
             </CardDescription>
           </CardHeader>
@@ -48,7 +48,7 @@ const Dashboard = () => {
             <ol className="list-decimal space-y-2 pl-5 text-foreground">
               <li>Create a Groq account and generate an API key.</li>
               <li>
-                In TalkEcho Settings -> AI Providers, add Groq Llama-3.1 as the
+                In TalkEcho Settings -&gt; AI Providers, add Groq Llama-3.1 as the
                 completion model and paste your API key.
               </li>
               <li>
@@ -57,7 +57,7 @@ const Dashboard = () => {
               </li>
               <li>
                 Start your meeting, press <strong>Ctrl+Shift+M</strong> +
-                <strong>Ctrl+Shift+A</strong>, then choose the DE -> ZH/EN prompt
+                <strong>Ctrl+Shift+A</strong>, then choose the DE -&gt; ZH/EN prompt
                 preset to stream live captions.
               </li>
             </ol>

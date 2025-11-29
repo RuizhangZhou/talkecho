@@ -107,22 +107,22 @@ export const useMenuItems = () => {
     {
       title: "Website",
       icon: GlobeIcon,
-      link: "https://talkecho.com",
+      link: "https://ruizhangzhou.github.io",
     },
     {
       title: "Github",
       icon: GithubIcon,
-      link: "https://github.com/ruizhangzhou/talkecho",
+      link: "https://github.com/RuizhangZhou",
     },
     {
       title: "Buy Me a Coffee",
       icon: CoffeeIcon,
-      link: "https://buymeacoffee.com/srikanthnani",
+      link: "https://buymeacoffee.com/el08v9huyu",
     },
     {
       title: "Follow on X",
       icon: XIcon,
-      link: "https://x.com/truly_sn",
+      link: "https://x.com/zrzzzzzzz",
     },
   ];
 

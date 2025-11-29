@@ -20,12 +20,6 @@ import {
   generateMessageId,
 } from "@/lib";
 import { Message } from "@/types/completion";
-import {
-  MicrophoneRecorder,
-  base64ToAudioBuffer,
-  mixAudioBuffers,
-  audioBufferToBase64,
-} from "@/lib/audio-mixer";
 import { floatArrayToWav } from "@/lib/utils";
 
 // VAD Configuration interface matching Rust

@@ -13,6 +13,7 @@ export interface ChatMessage {
   content: string;
   timestamp: number;
   attachedFiles?: AttachedFile[];
+  source?: "system_audio" | "microphone";
 }
 
 export interface ChatConversation {

@@ -1,9 +1,9 @@
-﻿import { SparklesIcon } from "lucide-react";
 import { Button } from "@/components";
 import { cn } from "@/lib/utils";
 import { useLocation, useNavigate } from "react-router-dom";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useMenuItems, useVersion } from "@/hooks";
+import talkechoLogo from "../../images/talkecho.png";
 
 export const Sidebar = () => {
   const { version, isLoading } = useVersion();
@@ -18,8 +18,12 @@ export const Sidebar = () => {
         onClick={() => navigate("/dashboard")}
         className="flex h-16 items-center px-4 pt-10 gap-1.5"
       >
-        <div className="flex size-6 lg:size-7 items-center justify-center rounded-lg bg-primary">
-          <SparklesIcon className="size-4 lg:size-5 text-primary-foreground transition-all duration-300" />
+        <div className="flex items-center justify-center rounded-lg bg-primary p-1">
+          <img
+            src={talkechoLogo}
+            alt="TalkEcho logo"
+            className="h-5 w-5 lg:h-6 lg:w-6 rounded"
+          />
         </div>
         <div className="flex flex-col">
           <h1 className="text-xs lg:text-md font-semibold text-foreground transition-all duration-300">

@@ -12,7 +12,7 @@ export const Audio = ({
   submit,
   setState,
 }: UseCompletionReturn) => {
-  const { selectedSttProvider, talkechoApiEnabled, selectedAudioDevices } =
+  const { selectedSttProvider, talkEchoApiEnabled, selectedAudioDevices } =
     useApp();
 
   const speechProviderStatus = selectedSttProvider.provider;
@@ -20,7 +20,7 @@ export const Audio = ({
   return (
     <Popover open={micOpen} onOpenChange={setMicOpen}>
       <PopoverTrigger asChild>
-        {(talkechoApiEnabled || speechProviderStatus) && enableVAD ? (
+        {(talkEchoApiEnabled || speechProviderStatus) && enableVAD ? (
           <AutoSpeechVAD
             key={selectedAudioDevices.input}
             submit={submit}
@@ -46,7 +46,7 @@ export const Audio = ({
         align="end"
         side="bottom"
         className={`w-80 p-3 ${
-          talkechoApiEnabled || speechProviderStatus ? "hidden" : ""
+          talkEchoApiEnabled || speechProviderStatus ? "hidden" : ""
         }`}
         sideOffset={8}
       >

@@ -17,8 +17,9 @@ export const ChatAudio = ({
   setIsRecording,
   disabled,
 }: ChatAudioProps) => {
-  const { selectedSttProvider, talkechoApiEnabled } = useApp();
-  const isProviderConfigured = talkechoApiEnabled || selectedSttProvider.provider;
+  const { selectedSttProvider, talkEchoApiEnabled } = useApp();
+  const isProviderConfigured =
+    talkEchoApiEnabled || selectedSttProvider.provider;
 
   const handleMicClick = () => {
     if (!isProviderConfigured) {

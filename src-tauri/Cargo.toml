@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "talkecho"
 version = "0.1.8"
 description = "TalkEcho - invisible real-time meeting captions & translation (forked from Pluely)."

@@ -21,7 +21,6 @@ import {
   Loader2,
   HeadphonesIcon,
   MicIcon,
-  BotIcon,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import moment from "moment";
