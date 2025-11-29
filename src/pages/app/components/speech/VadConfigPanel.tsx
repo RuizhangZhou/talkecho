@@ -111,7 +111,7 @@ export const VadConfigPanel = ({
                   onValueChange={([value]) =>
                     handleUpdate({ silence_chunks: Math.round(value) })
                   }
-                  min={45}
+                  min={10}
                   max={180}
                   step={5}
                   className="w-full"

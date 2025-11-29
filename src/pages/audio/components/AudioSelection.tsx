@@ -7,7 +7,7 @@ import {
   Button,
 } from "@/components";
 import { MicIcon, RefreshCwIcon, HeadphonesIcon } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useApp } from "@/contexts";
 import { STORAGE_KEYS } from "@/config/constants";
 import { safeLocalStorage } from "@/lib/storage";
@@ -93,6 +93,10 @@ export const AudioSelection = () => {
       setIsLoadingDevices(false);
     }
   };
+
+  useEffect(() => {
+    loadAudioDevices();
+  }, []);
 
   // Handle device selection changes
   const handleDeviceChange = (type: "input" | "output", deviceId: string) => {
