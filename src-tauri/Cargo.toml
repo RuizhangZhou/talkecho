@@ -1,6 +1,6 @@
 [package]
 name = "talkecho"
-version = "0.1.8"
+version = "0.1.0"
 description = "TalkEcho - invisible real-time meeting captions & translation (forked from Pluely)."
 authors = ["Ruizhang Zhou <support@talkecho.com>"]
 license = "GPL-3.0"
@@ -67,4 +67,3 @@ libpulse-simple-binding = "2.29.0"
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-autostart = "2.5.0"
-
