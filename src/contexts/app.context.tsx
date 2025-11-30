@@ -93,8 +93,11 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     provider: string;
     variables: Record<string, string>;
   }>({
-    provider: "",
-    variables: {},
+    provider: "groq",
+    variables: {
+      api_key: "",
+      model: "llama-3.1-8b-instant",
+    },
   });
 
   // STT Providers
@@ -105,8 +108,11 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     provider: string;
     variables: Record<string, string>;
   }>({
-    provider: "",
-    variables: {},
+    provider: "groq",
+    variables: {
+      api_key: "",
+      model: "whisper-large-v3-turbo",
+    },
   });
 
   const [screenshotConfiguration, setScreenshotConfiguration] =

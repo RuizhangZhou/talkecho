@@ -1,4 +1,5 @@
-﻿import { PageLayout } from "@/layouts";
+import { useEffect, useState } from "react";
+import { PageLayout } from "@/layouts";
 import {
   Card,
   CardContent,
@@ -6,12 +7,64 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Button, Input } from "@/components";
+import { useSettings } from "@/hooks";
 
 const Dashboard = () => {
+  const {
+    selectedAIProvider,
+    onSetSelectedAIProvider,
+    onSetSelectedSttProvider,
+  } = useSettings();
+
+  const [groqApiKey, setGroqApiKey] = useState("");
+  const [status, setStatus] = useState<"idle" | "success" | "error">("idle");
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    if (selectedAIProvider.provider === "groq") {
+      setGroqApiKey(selectedAIProvider.variables?.api_key || "");
+    }
+  }, [selectedAIProvider.provider, selectedAIProvider.variables]);
+
+  const handleSaveGroqKey = () => {
+    if (!groqApiKey.trim()) {
+      setStatus("error");
+      return;
+    }
+
+    setIsSaving(true);
+    setStatus("idle");
+
+    try {
+      const apiKeyValue = groqApiKey.trim();
+      onSetSelectedAIProvider({
+        provider: "groq",
+        variables: {
+          api_key: apiKeyValue,
+          model: "llama-3.1-8b-instant",
+        },
+      });
+      onSetSelectedSttProvider({
+        provider: "groq",
+        variables: {
+          api_key: apiKeyValue,
+          model: "whisper-large-v3-turbo",
+        },
+      });
+      setStatus("success");
+    } catch (error) {
+      console.error("Failed to save Groq API key:", error);
+      setStatus("error");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   return (
     <PageLayout
       title="Dashboard"
-      description="TalkEcho Alpha - free for personal use. Bring your own AI/STT keys, no license key required."
+      description="TalkEcho Alpha - free for personal use. Bring your own Groq API key and start captioning instantly."
     >
       <div className="grid gap-4">
         <Card className="shadow-none border border-border/70 rounded-xl">
@@ -40,31 +93,67 @@ const Dashboard = () => {
           <CardHeader>
             <CardTitle>Groq Quickstart</CardTitle>
             <CardDescription>
-              Configure TalkEcho for "German meeting -&gt; Chinese/English
-              translation" using Groq&apos;s API.
+              Connect your Groq account once—we’ll wire Groq Whisper + Llama
+              3.1 automatically.
             </CardDescription>
           </CardHeader>
-          <CardContent className="text-sm text-muted-foreground space-y-2">
+          <CardContent className="text-sm text-muted-foreground space-y-4">
             <ol className="list-decimal space-y-2 pl-5 text-foreground">
-              <li>Create a Groq account and generate an API key.</li>
               <li>
-                In TalkEcho Settings -&gt; AI Providers, add Groq Llama-3.1 as the
-                completion model and paste your API key.
+                Visit{" "}
+                <Button
+                  variant="link"
+                  className="px-0 text-primary"
+                  onClick={() =>
+                    window.open("https://console.groq.com/keys", "_blank")
+                  }
+                >
+                  console.groq.com/keys
+                </Button>{" "}
+                and generate an API key.
               </li>
+              <li>Paste it below and click “Save & Enable”.</li>
               <li>
-                In Speech-to-Text providers, pick Groq Whisper for real-time
-                transcription.
-              </li>
-              <li>
-                Start your meeting, press <strong>Ctrl+Shift+M</strong> +
-                <strong>Ctrl+Shift+A</strong>, then choose the DE -&gt; ZH/EN prompt
-                preset to stream live captions.
+                Optional: tweak your system prompt under Settings → Context if
+                you need a custom workflow.
               </li>
             </ol>
-            <p>
-              Need another provider? Use the same flow to plug in OpenAI,
-              Anthropic, local Ollama endpoints, or any custom curl template.
-            </p>
+
+            <div className="space-y-2">
+              <Input
+                type="password"
+                placeholder="sk-********************************"
+                value={groqApiKey}
+                onChange={(e) => {
+                  setGroqApiKey(e.target.value);
+                  if (status !== "idle") setStatus("idle");
+                }}
+                className="h-11"
+              />
+              <p className="text-xs text-muted-foreground">
+                Stored locally. Used for Groq Whisper + Llama 3.1 automatically.
+              </p>
+            </div>
+
+            <Button
+              onClick={handleSaveGroqKey}
+              disabled={isSaving || !groqApiKey.trim()}
+              className="w-full"
+            >
+              {isSaving ? "Saving..." : "Save & Enable Groq"}
+            </Button>
+
+            {status === "success" && (
+              <p className="text-xs text-green-600 bg-green-500/10 p-2 rounded-md">
+                ✓ Groq is ready! TalkEcho will use Whisper + Llama 3.1 with your
+                key.
+              </p>
+            )}
+            {status === "error" && (
+              <p className="text-xs text-red-600 bg-red-500/10 p-2 rounded-md">
+                Please paste a valid Groq API key and try again.
+              </p>
+            )}
           </CardContent>
         </Card>
       </div>
