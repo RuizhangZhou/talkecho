@@ -2,7 +2,7 @@
 
 _Invisible real-time meeting subtitles & translation assistant (forked from [Pluely](https://github.com/iamsrikanthnani/pluely))._
 
-TalkEcho runs as a translucent desktop overlay that captures both system audio and microphone input, streams them to the speech-to-text / LLM providers you choose, and returns bilingual captions (optimized for German -> Chinese/English) without tipping anyone off.
+TalkEcho runs as a translucent desktop overlay that captures both system audio and microphone input, streams them to the speech-to-text / LLM providers you choose, and returns bilingual captions without tipping anyone off.
 
 ---
 
