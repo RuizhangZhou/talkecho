@@ -1,4 +1,4 @@
-import { ChatConversation } from "@/types";
+import type { ChatConversation } from "@/hooks/useSystemAudio";
 import { Button, Card, Markdown } from "@/components";
 import {
   BotIcon,
@@ -45,36 +45,30 @@ export const OperationSection = ({
 
   return (
     <div className="space-y-3">
-      {/* AI Response - Latest (Single Track Mode) */}
       {(lastAIResponse || isAIProcessing) && !includeMicrophone && (
-        <>
-          <div className="space-y-2">
-            <div className="flex items-center gap-2">
-              <BotIcon className="w-3 h-3" />
-              <h3 className="font-semibold text-xs">{`AI Assistant - answering to "${lastTranscription}"`}</h3>
-            </div>
-            <Card className="px-3 py-2 bg-transparent">
-              {isAIProcessing && !lastAIResponse ? (
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full animate-pulse" />
-                  <p className="text-xs italic">Generating response...</p>
-                </div>
-              ) : (
-                <p className="text-sm leading-relaxed whitespace-pre-wrap">
-                  {lastAIResponse ? (
-                    <Markdown>{lastAIResponse}</Markdown>
-                  ) : null}
-                  {isAIProcessing && (
-                    <span className="inline-block w-2 h-4 animate-pulse ml-1" />
-                  )}
-                </p>
-              )}
-            </Card>
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <BotIcon className="w-3 h-3" />
+            <h3 className="font-semibold text-xs">{`AI Assistant - answering to "${lastTranscription}"`}</h3>
           </div>
-        </>
+          <Card className="px-3 py-2 bg-transparent">
+            {isAIProcessing && !lastAIResponse ? (
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full animate-pulse" />
+                <p className="text-xs italic">Generating response...</p>
+              </div>
+            ) : (
+              <p className="text-sm leading-relaxed whitespace-pre-wrap">
+                {lastAIResponse ? <Markdown>{lastAIResponse}</Markdown> : null}
+                {isAIProcessing && (
+                  <span className="inline-block w-2 h-4 animate-pulse ml-1" />
+                )}
+              </p>
+            )}
+          </Card>
+        </div>
       )}
 
-      {/* Dual-Track Mode: Chat-style display - Each message displayed independently */}
       {includeMicrophone && sortedMessages.length > 0 && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
@@ -111,13 +105,12 @@ export const OperationSection = ({
           {openConversation && (
             <div className="space-y-2">
               {sortedMessages.map((message) => {
-                // 决定左右位置：麦克风（我）= 右侧, 系统音频（对方）= 左侧
-                const isRightSide = message.source === "microphone";
-
-                // 决定图标和样式
+                const isManualSource = message.source === "manual";
+                const isRightSide =
+                  message.source === "microphone" ||
+                  (isManualSource && message.role === "user");
                 const isUser = message.role === "user";
 
-                // 图标选择
                 let icon;
                 if (message.source === "microphone") {
                   icon = isUser ? (
@@ -125,14 +118,37 @@ export const OperationSection = ({
                   ) : (
                     <BotIcon className="h-2.5 w-2.5 text-primary-foreground" />
                   );
+                    } else if (isManualSource) {
+                      icon = (
+                        <img
+                          src="/images/talkecho.png"
+                          alt="TalkEcho"
+                          className="h-2.5 w-2.5 object-contain"
+                        />
+                      );
                 } else {
-                  // system_audio
                   icon = isUser ? (
                     <HeadphonesIcon className="h-2.5 w-2.5 text-muted-foreground" />
                   ) : (
                     <BotIcon className="h-2.5 w-2.5 text-muted-foreground" />
                   );
                 }
+
+                const bubbleClass = isManualSource
+                  ? isRightSide
+                    ? "bg-purple-600 text-white border-purple-600"
+                    : "bg-purple-50 text-purple-900 border border-purple-100"
+                  : isRightSide
+                  ? "bg-primary text-white border-primary"
+                  : "bg-muted/50 text-foreground";
+
+                const avatarClass = isManualSource
+                  ? isRightSide
+                    ? "bg-purple-600"
+                    : "bg-purple-100"
+                  : isRightSide
+                  ? "bg-primary"
+                  : "bg-primary/10";
 
                 return (
                   <div
@@ -146,23 +162,13 @@ export const OperationSection = ({
                         isRightSide ? "flex-row-reverse" : "flex-row"
                       }`}
                     >
-                      {/* Icon */}
                       <div
-                        className={`h-5 w-5 rounded-full ${
-                          isRightSide ? "bg-primary" : "bg-primary/10"
-                        } flex items-center justify-center shrink-0`}
+                        className={`h-5 w-5 rounded-full ${avatarClass} flex items-center justify-center shrink-0`}
                       >
                         {icon}
                       </div>
 
-                      {/* Message bubble */}
-                      <Card
-                        className={`px-3 py-2 ${
-                          isRightSide
-                            ? "bg-primary text-white border-primary"
-                            : "bg-muted/50 text-foreground"
-                        }`}
-                      >
+                      <Card className={`px-3 py-2 ${bubbleClass}`}>
                         <div className="text-xs leading-relaxed whitespace-pre-wrap">
                           {message.content}
                         </div>
@@ -172,7 +178,6 @@ export const OperationSection = ({
                 );
               })}
 
-              {/* Processing indicators */}
               {(isAIProcessing || isMicProcessing) && (
                 <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground py-2">
                   <div className="w-2 h-2 rounded-full animate-pulse bg-primary" />
@@ -180,14 +185,12 @@ export const OperationSection = ({
                 </div>
               )}
 
-              {/* 自动滚动到底部的锚点 */}
               <div ref={messagesEndRef} />
             </div>
           )}
         </div>
       )}
 
-      {/* Single Track Mode: Original display */}
       {!includeMicrophone && conversation.messages.length > 2 && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
@@ -221,32 +224,45 @@ export const OperationSection = ({
             </div>
           </div>
 
-          {openConversation ? (
-            <>
-              {conversation.messages.length > 2 &&
-                conversation?.messages
-                  ?.slice(2)
-                  .sort((a, b) => b.timestamp - a.timestamp)
-                  .map((message) => (
-                    <div key={message.id} className="space-y-3 flex flex-row gap-2">
-                      <div className="flex items-start gap-2">
-                        <div className="h-6 w-6 rounded-full bg-muted flex items-center justify-center">
-                          {message.role === "user" ? (
-                            <HeadphonesIcon className="h-4 w-4 text-muted-foreground" />
-                          ) : (
-                            <BotIcon className="h-4 w-4 text-muted-foreground" />
-                          )}
-                        </div>
+          {openConversation &&
+            conversation.messages
+              .slice(2)
+              .sort((a, b) => b.timestamp - a.timestamp)
+              .map((message) => {
+                const isManualSource = message.source === "manual";
+                return (
+                  <div key={message.id} className="space-y-3 flex flex-row gap-2">
+                    <div className="flex items-start gap-2">
+                      <div
+                        className={`h-6 w-6 rounded-full flex items-center justify-center ${
+                          isManualSource ? "bg-purple-100" : "bg-muted"
+                        }`}
+                      >
+                            {isManualSource ? (
+                              <img
+                                src="/images/talkecho.png"
+                                alt="TalkEcho"
+                                className="h-4 w-4 object-contain"
+                              />
+                            ) : message.role === "user" ? (
+                          <HeadphonesIcon className="h-4 w-4 text-muted-foreground" />
+                        ) : (
+                          <BotIcon className="h-4 w-4 text-muted-foreground" />
+                        )}
                       </div>
-                      <Card className="px-3 py-2 bg-transparent">
-                        <p className="text-xs leading-relaxed whitespace-pre-wrap">
-                          <Markdown>{message.content}</Markdown>
-                        </p>
-                      </Card>
                     </div>
-                  ))}
-            </>
-          ) : null}
+                    <Card
+                      className={`px-3 py-2 ${
+                        isManualSource ? "bg-purple-50 border border-purple-100" : "bg-transparent"
+                      }`}
+                    >
+                      <p className="text-xs leading-relaxed whitespace-pre-wrap">
+                        <Markdown>{message.content}</Markdown>
+                      </p>
+                    </Card>
+                  </div>
+                );
+              })}
         </div>
       )}
     </div>

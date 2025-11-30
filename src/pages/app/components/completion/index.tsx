@@ -1,18 +1,5 @@
-import { useCompletion } from "@/hooks";
-import { Screenshot } from "./Screenshot";
-import { Files } from "./Files";
-import { Audio } from "./Audio";
-import { Input } from "./Input";
 
-export const Completion = ({ isHidden }: { isHidden: boolean }) => {
-  const completion = useCompletion();
-
-  return (
-    <>
-      <Audio {...completion} />
-      <Input {...completion} isHidden={isHidden} />
-      <Screenshot {...completion} />
-      <Files {...completion} />
-    </>
-  );
+export const Completion = () => {
+  // 已迁移到 SystemAudio 弹窗中的统一对话，不再渲染旧的 AI 响应 popover
+  return null;
 };

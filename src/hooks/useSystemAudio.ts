@@ -1,10 +1,10 @@
-﻿import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useWindowResize, useGlobalShortcuts } from ".";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useApp } from "@/contexts";
 import { fetchSTT, fetchAIResponse } from "@/lib/functions";
-import { useMicVAD } from "@ricky0123/vad-react";
+import { MicVAD } from "@ricky0123/vad-web";
 import {
   DEFAULT_QUICK_ACTIONS,
   DEFAULT_SYSTEM_PROMPT,
@@ -19,7 +19,10 @@ import {
   generateConversationId,
   generateMessageId,
 } from "@/lib";
-import { Message } from "@/types/completion";
+import type {
+  Message as CompletionMessage,
+  ChatConversation as CompletionConversation,
+} from "@/types/completion";
 import { floatArrayToWav } from "@/lib/utils";
 
 // VAD Configuration interface matching Rust
@@ -34,6 +37,11 @@ export interface VadConfig {
   noise_gate_threshold: number;
   max_recording_duration_secs: number;
 }
+const DISPLAY_SAMPLE_RATE = 44100;
+const MIC_VAD_SAMPLE_RATE = 16000;
+const MIC_VAD_FRAME_SAMPLES = 512;
+const DEFAULT_USER_SPEAKING_THRESHOLD = 0.6;
+
 
 // OPTIMIZED VAD defaults - matches backend exactly for perfect performance
 const DEFAULT_VAD_CONFIG: VadConfig = {
@@ -54,7 +62,7 @@ interface ChatMessage {
   role: "user" | "assistant" | "system";
   content: string;
   timestamp: number;
-  source?: "system_audio" | "microphone"; // audio source
+  source?: "system_audio" | "microphone" | "manual"; // audio source
 }
 
 // Conversation interface (reusing from useCompletion)
@@ -72,6 +80,15 @@ export function useSystemAudio() {
   const { resizeWindow } = useWindowResize();
   const globalShortcuts = useGlobalShortcuts();
   const [isPopoverOpen, setIsPopoverOpen] = useState(false);
+  const closeConversationPopover = useCallback(
+    () => setIsPopoverOpen(false),
+    []
+  );
+  const toggleConversationPopover = useCallback(
+    () => setIsPopoverOpen((prev) => !prev),
+    []
+  );
+  const openConversationPopover = useCallback(() => setIsPopoverOpen(true), []);
   const [capturing, setCapturing] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isAIProcessing, setIsAIProcessing] = useState(false);
@@ -103,6 +120,30 @@ export function useSystemAudio() {
     updatedAt: 0,
   });
 
+  const buildConversationHistory = useCallback(() => {
+    const history: CompletionMessage[] = conversation.messages
+      .slice()
+      .reverse()
+      .map((msg) => ({
+        role: msg.role,
+        content: msg.content,
+      }));
+    return history;
+  }, [conversation.messages]);
+
+  const convertConversationForSave = useCallback((): CompletionConversation => {
+    return {
+      ...conversation,
+      messages: conversation.messages.map((msg) => ({
+        id: msg.id,
+        role: msg.role,
+        content: msg.content,
+        timestamp: msg.timestamp,
+        source: msg.source === "microphone" ? "microphone" : "system_audio",
+      })),
+    };
+  }, [conversation]);
+
   // Context management states
   const [useSystemPrompt, setUseSystemPrompt] = useState<boolean>(true);
   const [contextContent, setContextContent] = useState<string>("");
@@ -124,38 +165,137 @@ export function useSystemAudio() {
   const processMicrophoneAudioRef = useRef<((audio: Float32Array) => Promise<void>) | null>(null);
 
   // Microphone VAD for dual-track mode
-  const audioConstraints: MediaTrackConstraints = selectedAudioDevices.input
-    ? { deviceId: { exact: selectedAudioDevices.input } }
-    : { deviceId: "default" };
+  const audioConstraints: MediaTrackConstraints = useMemo(
+    () =>
+      selectedAudioDevices.input
+        ? { deviceId: { exact: selectedAudioDevices.input } }
+        : { deviceId: "default" },
+    [selectedAudioDevices.input]
+  );
 
-  const micVAD = useMicVAD({
-    startOnLoad: false, // We'll start it manually
-    userSpeakingThreshold: 0.6,
-    additionalAudioConstraints: audioConstraints,
-    onSpeechEnd: async (audio: Float32Array) => {
-      // Only process if microphone mode is enabled and capturing
-      if (includeMicrophone && capturing && processMicrophoneAudioRef.current) {
-        await processMicrophoneAudioRef.current(audio);
+  const micVadInstanceRef = useRef<MicVAD | null>(null);
+  const [micVadListening, setMicVadListening] = useState(false);
+  const [micVadLoading, setMicVadLoading] = useState(true);
+  const [micVadErrored, setMicVadErrored] = useState<string | false>(false);
+  const [micVadUserSpeaking, setMicVadUserSpeaking] = useState(false);
+
+  const includeMicRef = useRef(includeMicrophone);
+  useEffect(() => {
+    includeMicRef.current = includeMicrophone;
+  }, [includeMicrophone]);
+
+  const capturingRef = useRef(capturing);
+  useEffect(() => {
+    capturingRef.current = capturing;
+  }, [capturing]);
+
+  const microphoneSilenceSeconds = useMemo(() => {
+    return (vadConfig.silence_chunks * vadConfig.hop_size) / DISPLAY_SAMPLE_RATE;
+  }, [vadConfig.silence_chunks, vadConfig.hop_size]);
+
+  const microphoneRedemptionFrames = useMemo(() => {
+    const frameDuration = MIC_VAD_FRAME_SAMPLES / MIC_VAD_SAMPLE_RATE;
+    return Math.max(1, Math.round(microphoneSilenceSeconds / frameDuration));
+  }, [microphoneSilenceSeconds]);
+
+  const microphoneRedemptionFramesRef = useRef(microphoneRedemptionFrames);
+  useEffect(() => {
+    microphoneRedemptionFramesRef.current = microphoneRedemptionFrames;
+    if (micVadInstanceRef.current) {
+      micVadInstanceRef.current.setOptions({
+        redemptionFrames: microphoneRedemptionFrames,
+      });
+    }
+  }, [microphoneRedemptionFrames]);
+
+  useEffect(() => {
+    let canceled = false;
+    setMicVadLoading(true);
+    setMicVadErrored(false);
+
+    const initializeMicVAD = async () => {
+      try {
+        const vad = await MicVAD.new({
+          additionalAudioConstraints: audioConstraints,
+          frameSamples: MIC_VAD_FRAME_SAMPLES,
+          onFrameProcessed: (probabilities) => {
+            setMicVadUserSpeaking(
+              probabilities.isSpeech > DEFAULT_USER_SPEAKING_THRESHOLD
+            );
+          },
+          onSpeechEnd: async (audio: Float32Array) => {
+            if (
+              includeMicRef.current &&
+              capturingRef.current &&
+              processMicrophoneAudioRef.current
+            ) {
+              await processMicrophoneAudioRef.current(audio);
+            }
+          },
+        });
+
+        if (canceled) {
+          vad.destroy();
+          return;
+        }
+
+        micVadInstanceRef.current = vad;
+        vad.setOptions({ redemptionFrames: microphoneRedemptionFramesRef.current });
+        setMicVadLoading(false);
+
+        if (includeMicRef.current && capturingRef.current) {
+          vad.start();
+          setMicVadListening(true);
+        }
+      } catch (err) {
+        if (canceled) return;
+        const message = err instanceof Error ? err.message : String(err);
+        setMicVadErrored(message || "Microphone VAD failed to initialize");
+        setMicVadLoading(false);
       }
-    },
-  });
+    };
+
+    initializeMicVAD();
+
+    return () => {
+      canceled = true;
+      if (micVadInstanceRef.current) {
+        micVadInstanceRef.current.destroy();
+        micVadInstanceRef.current = null;
+      }
+      setMicVadListening(false);
+      setMicVadUserSpeaking(false);
+    };
+  }, [audioConstraints]);
+
+  const startMicVad = useCallback(() => {
+    if (micVadLoading || micVadErrored || !micVadInstanceRef.current) {
+      return;
+    }
+    micVadInstanceRef.current.start();
+    setMicVadListening(true);
+    console.log("Microphone VAD started");
+  }, [micVadLoading, micVadErrored]);
+
+  const pauseMicVad = useCallback(() => {
+    if (!micVadInstanceRef.current) {
+      return;
+    }
+    micVadInstanceRef.current.pause();
+    setMicVadListening(false);
+    console.log("Microphone VAD stopped");
+  }, []);
 
   // Control microphone VAD based on includeMicrophone and capturingçŠ¶æ€
   useEffect(() => {
     if (includeMicrophone && capturing) {
-      // Start microphone VAD
-      if (!micVAD.listening) {
-        micVAD.start();
-        console.log("Microphone VAD started");
+      if (!micVadListening) {
+        startMicVad();
       }
-    } else {
-      // Stop microphone VAD
-      if (micVAD.listening) {
-        micVAD.pause();
-        console.log("Microphone VAD stopped");
-      }
+    } else if (micVadListening) {
+      pauseMicVad();
     }
-  }, [includeMicrophone, capturing, micVAD.listening]);
+  }, [includeMicrophone, capturing, micVadListening, startMicVad, pauseMicVad]);
 
   // Load context settings and VAD config from localStorage on mount
   useEffect(() => {
@@ -339,9 +479,7 @@ export function useSystemAudio() {
                   ? systemPrompt || DEFAULT_SYSTEM_PROMPT
                   : contextContent || DEFAULT_SYSTEM_PROMPT;
 
-                const previousMessages = conversation.messages.map((msg) => {
-                  return { role: msg.role, content: msg.content };
-                });
+                const previousMessages = buildConversationHistory();
 
                 await processWithAI(
                   transcription,
@@ -468,11 +606,9 @@ export function useSystemAudio() {
       ? systemPrompt || DEFAULT_SYSTEM_PROMPT
       : contextContent || DEFAULT_SYSTEM_PROMPT;
 
-    const previousMessages = conversation.messages.map((msg) => {
-      return { role: msg.role, content: msg.content };
-    });
+    const previousMessages = buildConversationHistory();
 
-    await processWithAI(action, effectiveSystemPrompt, previousMessages);
+    await processWithAI(action, effectiveSystemPrompt, previousMessages, "manual");
   };
 
   // Start continuous recording manually
@@ -644,7 +780,8 @@ export function useSystemAudio() {
     async (
       transcription: string,
       prompt: string,
-      previousMessages: Message[]
+      previousMessages: CompletionMessage[],
+      source: ChatMessage["source"] = "system_audio"
     ) => {
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
@@ -699,14 +836,14 @@ export function useSystemAudio() {
                 role: "user" as const,
                 content: transcription,
                 timestamp,
-                source: "system_audio" as const, // æ ‡è®°ä¸ºç³»ç»ŸéŸ³é¢‘
+                source: source ?? "system_audio",
               },
               {
                 id: generateMessageId("assistant", timestamp + 1),
                 role: "assistant" as const,
                 content: fullResponse,
                 timestamp: timestamp + 1,
-                source: "system_audio" as const, // æ ‡è®°ä¸ºç³»ç»ŸéŸ³é¢‘
+                source: source ?? "system_audio",
               },
               ...prev.messages,
             ],
@@ -722,6 +859,23 @@ export function useSystemAudio() {
       }
     },
     [selectedAIProvider, allAiProviders, conversation.messages]
+  );
+
+  const sendManualPrompt = useCallback(
+    async (promptText: string) => {
+      const trimmed = promptText.trim();
+      if (!trimmed) return;
+
+      const previousMessages = buildConversationHistory();
+
+      await processWithAI(
+        trimmed,
+        DEFAULT_SYSTEM_PROMPT,
+        previousMessages,
+        "manual"
+      );
+    },
+    [buildConversationHistory, processWithAI]
   );
 
   const startCapture = useCallback(async () => {
@@ -800,7 +954,6 @@ export function useSystemAudio() {
       setLastTranscription("");
       setLastAIResponse("");
       setError("");
-      setIsPopoverOpen(false);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       setError(`Failed to stop capture: ${errorMessage}`);
@@ -855,14 +1008,19 @@ export function useSystemAudio() {
   }, [startCapture]);
 
   useEffect(() => {
-    const shouldOpenPopover =
+    const shouldAutoOpen =
       capturing ||
       setupRequired ||
       isAIProcessing ||
       !!lastAIResponse ||
       !!error;
-    setIsPopoverOpen(shouldOpenPopover);
-    resizeWindow(shouldOpenPopover);
+
+    if (shouldAutoOpen) {
+      setIsPopoverOpen(true);
+    }
+
+    const effectiveOpen = shouldAutoOpen || isPopoverOpen;
+    resizeWindow(effectiveOpen);
   }, [
     capturing,
     setupRequired,
@@ -870,6 +1028,7 @@ export function useSystemAudio() {
     lastAIResponse,
     error,
     resizeWindow,
+    isPopoverOpen,
   ]);
 
   useEffect(() => {
@@ -947,7 +1106,8 @@ export function useSystemAudio() {
 
       try {
         isSavingRef.current = true;
-        await saveConversation(conversation);
+        const conversationForSave = convertConversationForSave();
+        await saveConversation(conversationForSave);
       } catch (error) {
         console.error("Failed to save system audio conversation:", error);
       } finally {
@@ -966,6 +1126,7 @@ export function useSystemAudio() {
     conversation.title,
     conversation.id,
     conversation.updatedAt,
+    convertConversationForSave,
   ]);
 
   const startNewConversation = useCallback(() => {
@@ -982,7 +1143,6 @@ export function useSystemAudio() {
     setSetupRequired(false);
     setIsProcessing(false);
     setIsAIProcessing(false);
-    setIsPopoverOpen(false);
     setUseSystemPrompt(true);
   }, []);
 
@@ -1083,6 +1243,32 @@ export function useSystemAudio() {
     ignoreContinuousRecording,
   ]);
 
+  const micVAD = useMemo(
+    () => ({
+      listening: micVadListening,
+      loading: micVadLoading,
+      errored: micVadErrored,
+      userSpeaking: micVadUserSpeaking,
+      start: startMicVad,
+      pause: pauseMicVad,
+      toggle: () => {
+        if (micVadListening) {
+          pauseMicVad();
+        } else {
+          startMicVad();
+        }
+      },
+    }),
+    [
+      micVadListening,
+      micVadLoading,
+      micVadErrored,
+      micVadUserSpeaking,
+      startMicVad,
+      pauseMicVad,
+    ]
+  );
+
   return {
     capturing,
     isProcessing,
@@ -1096,6 +1282,9 @@ export function useSystemAudio() {
     handleSetup,
     isPopoverOpen,
     setIsPopoverOpen,
+    openConversationPopover,
+    closeConversationPopover,
+    toggleConversationPopover,
     // Conversation management
     conversation,
     setConversation,
@@ -1117,6 +1306,7 @@ export function useSystemAudio() {
     showQuickActions,
     setShowQuickActions,
     handleQuickActionClick,
+    sendManualPrompt,
     // VAD configuration
     vadConfig,
     updateVadConfiguration,
@@ -1137,4 +1327,5 @@ export function useSystemAudio() {
     micVAD,
   };
 }
+
 

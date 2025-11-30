@@ -2,7 +2,7 @@
 name = "talkecho"
 version = "0.1.0"
 description = "TalkEcho - invisible real-time meeting captions & translation (forked from Pluely)."
-authors = ["Ruizhang Zhou <support@talkecho.com>"]
+authors = ["Ruizhang Zhou <ruizhang.zhou@mail.com>"]
 license = "GPL-3.0"
 repository = "https://github.com/ruizhangzhou/talkecho"
 homepage = "https://github.com/ruizhangzhou/talkecho"

@@ -6,10 +6,11 @@ import {
   ScrollArea,
 } from "@/components";
 import {
-  HeadphonesIcon,
   AlertCircleIcon,
   LoaderIcon,
   AudioLinesIcon,
+  PlayIcon,
+  SquareIcon,
 } from "lucide-react";
 import { Header } from "./Header";
 import { SetupInstructions } from "./SetupInstructions";
@@ -17,6 +18,7 @@ import { OperationSection } from "./OperationSection";
 import { PermissionFlow } from "./PermissionFlow";
 import { useSystemAudioType } from "@/hooks";
 import { useApp } from "@/contexts";
+import { StatusIndicator } from "./StatusIndicator";
 
 export const SystemAudio = (props: useSystemAudioType) => {
   const {
@@ -31,6 +33,7 @@ export const SystemAudio = (props: useSystemAudioType) => {
     stopCapture,
     isPopoverOpen,
     setIsPopoverOpen,
+    openConversationPopover,
     startNewConversation,
     conversation,
     resizeWindow,
@@ -53,53 +56,36 @@ export const SystemAudio = (props: useSystemAudioType) => {
     if (capturing) {
       await stopCapture();
     } else {
+      openConversationPopover();
       await startCapture();
     }
   };
 
-  const getButtonIcon = () => {
-    if (setupRequired) return <AlertCircleIcon className="text-orange-500" />;
-    if (error && !setupRequired)
-      return <AlertCircleIcon className="text-red-500" />;
-    if (isProcessing) return <LoaderIcon className="animate-spin" />;
-    if (capturing)
-      return <AudioLinesIcon className="text-green-500 animate-pulse" />;
-    return <HeadphonesIcon />;
-  };
+  const getButtonIcon = () =>
+    capturing ? (
+      <SquareIcon className="w-4 h-4" />
+    ) : (
+      <PlayIcon className="w-4 h-4" />
+    );
 
-  const getButtonTitle = () => {
-    if (setupRequired) return "Setup required - Click for instructions";
-    if (error && !setupRequired) return `Error: ${error}`;
-    if (isProcessing) return "Transcribing audio...";
-    if (capturing) return "Stop system audio capture";
-    return "Start system audio capture";
-  };
+  const getButtonTitle = () =>
+    capturing ? "Stop system audio capture" : "Start system audio capture";
 
   return (
-    <Popover
-      open={isPopoverOpen}
-      onOpenChange={(open) => {
-        // Don't allow closing the popover when capturing is active
-        if (capturing && !open) {
-          return;
-        }
-        setIsPopoverOpen(open);
-      }}
-    >
+    <Popover open={isPopoverOpen} onOpenChange={() => {}}>
       <PopoverTrigger asChild>
         <Button
           size="icon"
+          variant={capturing ? "secondary" : "outline"}
           title={getButtonTitle()}
           onClick={handleToggleCapture}
-          className={`${capturing ? "bg-green-50 hover:bg-green-100" : ""} ${
-            error ? "bg-red-100 hover:bg-red-200" : ""
-          }`}
+          className="cursor-pointer"
         >
           {getButtonIcon()}
         </Button>
       </PopoverTrigger>
 
-      {capturing || setupRequired || error ? (
+      {isPopoverOpen ? (
         <PopoverContent
           align="start"
           side="bottom"
@@ -108,6 +94,14 @@ export const SystemAudio = (props: useSystemAudioType) => {
         >
           <ScrollArea className="h-[calc(100vh-3rem)]" ref={scrollAreaRef}>
             <div className="p-4 space-y-3">
+              <StatusIndicator
+                setupRequired={setupRequired}
+                error={error}
+                isProcessing={isProcessing}
+                isAIProcessing={isAIProcessing}
+                capturing={capturing}
+              />
+
               {/* Header - Hide when there are messages to save space */}
               {!lastTranscription && !lastAIResponse && (
                 <Header

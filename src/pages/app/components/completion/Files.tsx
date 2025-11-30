@@ -5,7 +5,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Button, ScrollArea } from "@/components";
-import { PaperclipIcon, XIcon, PlusIcon, TrashIcon } from "lucide-react";
+import { PaperclipIcon, PlusIcon, TrashIcon } from "lucide-react";
 import { UseCompletionReturn } from "@/types";
 import { MAX_FILES } from "@/config";
 
@@ -74,7 +74,7 @@ export const Files = ({
                 className="cursor-pointer"
                 title="Close"
               >
-                <XIcon className="h-4 w-4" />
+                <span className="text-base font-semibold leading-none">×</span>
               </Button>
             </div>
 
@@ -114,7 +114,9 @@ export const Files = ({
                       onClick={() => removeFile(file.id)}
                       title="Remove image"
                     >
-                      <XIcon className="h-3 w-3" />
+                      <span className="text-sm font-semibold leading-none">
+                        ×
+                      </span>
                     </Button>
                   </div>
                 ))}

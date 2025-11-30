@@ -1,6 +1,3 @@
-import { X } from "lucide-react";
-import { Button } from "@/components";
-
 type Props = {
   setupRequired: boolean;
   setIsPopoverOpen: React.Dispatch<React.SetStateAction<boolean>>;
@@ -10,9 +7,6 @@ type Props = {
 
 export const Header = ({
   setupRequired,
-  setIsPopoverOpen,
-  resizeWindow,
-  capturing,
 }: Props) => {
   return (
     <div className="flex flex-col gap-3">
@@ -25,20 +19,6 @@ export const Header = ({
               : "Until and unless sound is detected from your speakers no api calls will be made"}
           </p>
         </div>
-        {!capturing ? (
-          <div className="">
-            <Button
-              size="icon"
-              title="Close Settings"
-              onClick={() => {
-                setIsPopoverOpen(false);
-                resizeWindow(false);
-              }}
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
-        ) : null}
       </div>
     </div>
   );
