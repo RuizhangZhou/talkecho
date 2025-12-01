@@ -65,7 +65,7 @@ TalkEcho is a community fork of [Pluely](https://github.com/iamsrikanthnani/plue
 
 ---
 
-Need help? Open an issue or ping `support@talkecho.com`.
+Need help? Open an issue or ping `ruizhang.zhou@mail.com`.
 
 
 
