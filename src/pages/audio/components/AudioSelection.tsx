@@ -11,6 +11,7 @@ import { useState, useEffect } from "react";
 import { useApp } from "@/contexts";
 import { STORAGE_KEYS } from "@/config/constants";
 import { safeLocalStorage } from "@/lib/storage";
+import { invoke } from "@tauri-apps/api/core";
 
 export const AudioSelection = () => {
   const { selectedAudioDevices, setSelectedAudioDevices } = useApp();
@@ -99,7 +100,10 @@ export const AudioSelection = () => {
   }, []);
 
   // Handle device selection changes
-  const handleDeviceChange = (type: "input" | "output", deviceId: string) => {
+  const handleDeviceChange = async (
+    type: "input" | "output",
+    deviceId: string
+  ) => {
     setSelectedAudioDevices((prev) => ({
       ...prev,
       [type]: deviceId,
@@ -111,6 +115,30 @@ export const AudioSelection = () => {
         : STORAGE_KEYS.SELECTED_AUDIO_OUTPUT_DEVICE;
 
     safeLocalStorage.setItem(storageKey, deviceId);
+
+    // Restart system audio capture if it's currently running and output device changed
+    if (type === "output") {
+      try {
+        const isCapturing = await invoke<boolean>("get_capture_status");
+        if (isCapturing) {
+          // Stop current capture
+          await invoke("stop_system_audio_capture");
+          // Wait a bit for cleanup
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          // Restart with new device
+          const vadConfig = JSON.parse(
+            safeLocalStorage.getItem("vad_config") || "{}"
+          );
+          await invoke("start_system_audio_capture", {
+            vadConfig,
+            deviceId: deviceId !== "default" ? deviceId : null,
+          });
+          console.log("🔄 Restarted system audio capture with new device");
+        }
+      } catch (error) {
+        console.error("Failed to restart system audio capture:", error);
+      }
+    }
 
     setShowSuccess((prev) => ({ ...prev, [type]: true }));
     setTimeout(() => {

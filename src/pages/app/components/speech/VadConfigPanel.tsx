@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button, Card, Label, Slider, Switch } from "@/components";
 import { ArrowDownIcon, ArrowUpIcon, SettingsIcon } from "lucide-react";
 import { VadConfig } from "@/hooks/useSystemAudio";
@@ -8,6 +8,37 @@ interface VadConfigPanelProps {
   onUpdate: (config: VadConfig) => void;
 }
 
+// Recommended presets for different scenarios
+const PRESETS = {
+  quiet: {
+    name: "Quiet Environment",
+    description: "More sensitive, picks up quiet speech",
+    config: {
+      sensitivity_rms: 0.008,
+      noise_gate_threshold: 0.002,
+      silence_chunks: 35,
+    },
+  },
+  normal: {
+    name: "Normal (Recommended)",
+    description: "Balanced for most environments",
+    config: {
+      sensitivity_rms: 0.012,
+      noise_gate_threshold: 0.003,
+      silence_chunks: 45,
+    },
+  },
+  noisy: {
+    name: "Noisy Environment",
+    description: "Less sensitive, reduces false positives",
+    config: {
+      sensitivity_rms: 0.020,
+      noise_gate_threshold: 0.005,
+      silence_chunks: 55,
+    },
+  },
+};
+
 export const VadConfigPanel = ({
   vadConfig,
   onUpdate,
@@ -15,10 +46,18 @@ export const VadConfigPanel = ({
   const [isOpen, setIsOpen] = useState(false);
   const [localConfig, setLocalConfig] = useState(vadConfig);
 
+  useEffect(() => {
+    setLocalConfig(vadConfig);
+  }, [vadConfig]);
+
   const handleUpdate = (updates: Partial<VadConfig>) => {
     const newConfig = { ...localConfig, ...updates };
     setLocalConfig(newConfig);
     onUpdate(newConfig);
+  };
+
+  const applyPreset = (presetConfig: Partial<VadConfig>) => {
+    handleUpdate(presetConfig);
   };
 
   return (
@@ -71,6 +110,32 @@ export const VadConfigPanel = ({
 
           {localConfig.enabled ? (
             <>
+              {/* Presets */}
+              <div className="space-y-2">
+                <Label className="text-xs font-medium">Quick Presets</Label>
+                <div className="grid grid-cols-3 gap-2">
+                  {Object.entries(PRESETS).map(([key, preset]) => (
+                    <Button
+                      key={key}
+                      size="sm"
+                      variant="outline"
+                      onClick={() => applyPreset(preset.config)}
+                      className="flex flex-col h-auto py-2 text-xs"
+                      title={preset.description}
+                    >
+                      <span className="font-medium">{preset.name}</span>
+                      <span className="text-[10px] text-muted-foreground opacity-70">
+                        {preset.description}
+                      </span>
+                    </Button>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground bg-blue-500/10 p-2 rounded-md border border-blue-500/20">
+                  💡 <strong>Tip:</strong> If you're getting false
+                  transcriptions, try the "Noisy Environment" preset to reduce
+                  sensitivity.
+                </p>
+              </div>
               {/* Sensitivity */}
               <div className="space-y-2">
                 <Label className="text-xs font-medium flex items-center justify-between">

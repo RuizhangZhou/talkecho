@@ -26,7 +26,15 @@ async function fetchTalkEchoSTT(audio: File | Blob): Promise<string> {
     });
 
     if (response.success && response.transcription) {
-      return response.transcription;
+      const transcription = response.transcription.trim();
+
+      // Check for hallucinations
+      if (isLikelyHallucination(transcription)) {
+        console.log(`🚫 Filtered hallucination (TalkEcho): "${transcription}"`);
+        return ""; // Return empty string to indicate no valid speech
+      }
+
+      return transcription;
     } else {
       return response.error || "Transcription failed";
     }
@@ -46,6 +54,92 @@ export interface STTParams {
 }
 
 /**
+ * Validates audio quality to avoid processing noise/silence
+ */
+async function validateAudioQuality(audio: File | Blob): Promise<{
+  valid: boolean;
+  reason?: string;
+}> {
+  try {
+    // Minimum audio size (0.3 seconds at 16kHz, mono, 16-bit = ~9.6KB)
+    const MIN_AUDIO_SIZE = 9600; // bytes
+
+    if (audio.size < MIN_AUDIO_SIZE) {
+      return {
+        valid: false,
+        reason: `Audio too short (${audio.size} bytes, minimum ${MIN_AUDIO_SIZE})`,
+      };
+    }
+
+    // Maximum audio size (10 minutes at 16kHz, mono, 16-bit = ~19.2MB)
+    const MAX_AUDIO_SIZE = 20 * 1024 * 1024; // 20MB to be safe
+
+    if (audio.size > MAX_AUDIO_SIZE) {
+      return {
+        valid: false,
+        reason: `Audio too long (${audio.size} bytes, maximum ${MAX_AUDIO_SIZE})`,
+      };
+    }
+
+    return { valid: true };
+  } catch (error) {
+    return {
+      valid: false,
+      reason: `Audio validation error: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
+// Whisper hallucination patterns (known false positives)
+const WHISPER_HALLUCINATIONS = [
+  // Common hallucinations
+  /^thank you\.?$/i,
+  /^thanks\.?$/i,
+  /^vielen dank\.?$/i,
+  /^vielen danke\.?$/i,
+  /^merci\.?$/i,
+  /^gracias\.?$/i,
+  /^grazie\.?$/i,
+  /^obrigado\.?$/i,
+  // Music/sound artifacts
+  /^\[.*\]$/i, // [Music], [Applause], etc.
+  /^♪.*♪$/i,
+  // Empty or whitespace only
+  /^\s*$/,
+  // Very short gibberish (1-2 chars)
+  /^[a-z]{1,2}\.?$/i,
+  // Subtitle artifacts
+  /^www\./i,
+];
+
+/**
+ * Checks if transcription is likely a Whisper hallucination
+ */
+function isLikelyHallucination(text: string): boolean {
+  const trimmed = text.trim();
+
+  // Check against known patterns
+  for (const pattern of WHISPER_HALLUCINATIONS) {
+    if (pattern.test(trimmed)) {
+      return true;
+    }
+  }
+
+  // Additional heuristics
+  // Too short (less than 3 characters after trimming)
+  if (trimmed.length < 3) {
+    return true;
+  }
+
+  // Only punctuation
+  if (/^[^\w\s]+$/.test(trimmed)) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Transcribes audio and returns either the transcription or an error/warning message as a single string.
  */
 export async function fetchSTT(params: STTParams): Promise<string> {
@@ -53,6 +147,13 @@ export async function fetchSTT(params: STTParams): Promise<string> {
 
   try {
     const { provider, selectedProvider, audio } = params;
+
+    // Validate audio quality first
+    const validation = await validateAudioQuality(audio);
+    if (!validation.valid) {
+      console.log(`🚫 Audio validation failed: ${validation.reason}`);
+      return ""; // Return empty string for invalid audio
+    }
 
     // Check if we should use TalkEcho API instead
     const useTalkEchoAPI = await shouldUseTalkEchoAPI();
@@ -229,6 +330,12 @@ export async function fetchSTT(params: STTParams): Promise<string> {
 
     if (!transcription) {
       return [...warnings, "No transcription found"].join("; ");
+    }
+
+    // Check for hallucinations
+    if (isLikelyHallucination(transcription)) {
+      console.log(`🚫 Filtered hallucination: "${transcription}"`);
+      return ""; // Return empty string to indicate no valid speech
     }
 
     // Return transcription with any warnings

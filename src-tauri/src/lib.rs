@@ -6,7 +6,7 @@ mod db;
 mod shortcuts;
 mod window;
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Manager, WebviewWindow};
+use tauri::Manager;
 use tauri_plugin_posthog::{init as posthog_init, PostHogConfig, PostHogOptions};
 use tokio::task::JoinHandle;
 mod speaker;
@@ -33,7 +33,7 @@ fn get_app_version() -> String {
 pub fn run() {
     // Get PostHog API key
     let posthog_api_key = option_env!("POSTHOG_API_KEY").unwrap_or("").to_string();
-    let mut builder = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(
             tauri_plugin_sql::Builder::default()
                 .add_migrations("sqlite:talkecho.db", db::migrations())
@@ -70,7 +70,7 @@ pub fn run() {
     {
         builder = builder.plugin(tauri_nspanel::init());
     }
-    let mut builder = builder
+    let builder = builder
         .invoke_handler(tauri::generate_handler![
             get_app_version,
             window::set_window_height,
@@ -121,7 +121,7 @@ pub fn run() {
 
             let app_handle = app.handle();
             if app_handle.get_webview_window("dashboard").is_none() {
-                if let Err(e) = window::create_dashboard_window(&app_handle) {
+                if let Err(e) = window::create_dashboard_window_with_close_handler(&app_handle) {
                     eprintln!("Failed to create dashboard window on startup: {}", e);
                 }
             }

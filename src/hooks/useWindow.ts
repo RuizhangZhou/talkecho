@@ -14,6 +14,9 @@ export const useWindowResize = () => {
   const resizeWindow = useCallback(async (expanded: boolean) => {
     try {
       const window = getCurrentWebviewWindow();
+      if (window.label !== "main") {
+        return;
+      }
 
       if (!expanded && isAnyPopoverOpen()) {
         return;

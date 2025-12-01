@@ -133,6 +133,9 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     safeLocalStorage.getItem(STORAGE_KEYS.TALKECHO_API_ENABLED) === "true"
   );
 
+  // Track if initial data has been loaded to prevent overwriting saved settings
+  const [isDataLoaded, setIsDataLoaded] = useState<boolean>(false);
+
   const getActiveLicenseStatus = async () => {
     setHasActiveLicense(true);
   };
@@ -250,6 +253,9 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     if (savedTalkEchoApiEnabled !== null) {
       setTalkEchoApiEnabledState(savedTalkEchoApiEnabled === "true");
     }
+
+    // Mark data as loaded to enable auto-save
+    setIsDataLoaded(true);
   };
 
   const updateCursor = (type: CursorType | undefined) => {
@@ -396,25 +402,43 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     return () => window.removeEventListener("storage", handleStorageChange);
   }, []);
 
-  // Sync selected AI to localStorage
+  // Sync selected AI to localStorage (only after initial load)
   useEffect(() => {
-    if (selectedAIProvider.provider) {
+    if (isDataLoaded && selectedAIProvider.provider) {
       safeLocalStorage.setItem(
         STORAGE_KEYS.SELECTED_AI_PROVIDER,
         JSON.stringify(selectedAIProvider)
       );
     }
-  }, [selectedAIProvider]);
+  }, [selectedAIProvider, isDataLoaded]);
 
-  // Sync selected STT to localStorage
+  // Sync selected STT to localStorage (only after initial load)
   useEffect(() => {
-    if (selectedSttProvider.provider) {
+    if (isDataLoaded && selectedSttProvider.provider) {
       safeLocalStorage.setItem(
         STORAGE_KEYS.SELECTED_STT_PROVIDER,
         JSON.stringify(selectedSttProvider)
       );
     }
-  }, [selectedSttProvider]);
+  }, [selectedSttProvider, isDataLoaded]);
+
+  // Sync selected audio devices to localStorage (only after initial load)
+  useEffect(() => {
+    if (isDataLoaded) {
+      if (selectedAudioDevices.input) {
+        safeLocalStorage.setItem(
+          STORAGE_KEYS.SELECTED_AUDIO_INPUT_DEVICE,
+          selectedAudioDevices.input
+        );
+      }
+      if (selectedAudioDevices.output) {
+        safeLocalStorage.setItem(
+          STORAGE_KEYS.SELECTED_AUDIO_OUTPUT_DEVICE,
+          selectedAudioDevices.output
+        );
+      }
+    }
+  }, [selectedAudioDevices, isDataLoaded]);
 
   // Computed all AI providers
   const allAiProviders: TYPE_PROVIDER[] = [

@@ -9,6 +9,37 @@ import AppRoutes from "./routes";
 const currentWindow = getCurrentWindow();
 const windowLabel = currentWindow.label;
 
+const ensureDashboardInitialRoute = () => {
+  if (windowLabel !== "dashboard") {
+    return;
+  }
+
+  const url = new URL(window.location.href);
+  const params = new URLSearchParams(url.search);
+  const requestedRoute = params.get("route");
+
+  const targetRoute = requestedRoute
+    ? requestedRoute.startsWith("/")
+      ? requestedRoute
+      : `/${requestedRoute}`
+    : "/dashboard";
+
+  if (requestedRoute) {
+    params.delete("route");
+  }
+
+  const newSearch = params.toString();
+  const newHash = `#${targetRoute}`;
+  const newUrl = `${url.origin}${url.pathname}${newSearch ? `?${newSearch}` : ""}${newHash}`;
+
+  const currentHash = window.location.hash || "";
+  if (currentHash !== newHash || requestedRoute) {
+    window.history.replaceState(null, "", newUrl);
+  }
+};
+
+ensureDashboardInitialRoute();
+
 // Render different components based on window label
 if (windowLabel.startsWith("capture-overlay-")) {
   const monitorIndex = parseInt(windowLabel.split("-")[2], 10) || 0;
