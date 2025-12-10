@@ -481,10 +481,12 @@ export function useSystemAudio() {
 
                 const previousMessages = buildConversationHistory();
 
+                // Real-time STT: auto-triggered, stateless (no history needed)
                 await processWithAI(
                   transcription,
                   effectiveSystemPrompt,
-                  previousMessages
+                  previousMessages,
+                  "system_audio"  // Auto-detect: STT source = no history
                 );
               } else {
                 setError("Received empty transcription");
@@ -608,6 +610,7 @@ export function useSystemAudio() {
 
     const previousMessages = buildConversationHistory();
 
+    // Q&A mode: manual input with full conversation history
     await processWithAI(action, effectiveSystemPrompt, previousMessages, "manual");
   };
 
@@ -810,12 +813,33 @@ export function useSystemAudio() {
           return;
         }
 
+        // Auto-detect: only "manual" input needs history, all STT-triggered sources are stateless
+        const useHistory = source === "manual";
+
+        // Limit history tokens for manual Q&A to avoid context overflow
+        // Simple estimation: 1 token ≈ 4 characters, limit to ~4000 tokens = 16000 chars
+        const MAX_HISTORY_CHARS = 16000;
+        let filteredHistory: CompletionMessage[] = [];
+
+        if (useHistory && previousMessages.length > 0) {
+          let totalChars = 0;
+          // Take messages from most recent (reversed order already) until we hit the limit
+          for (const msg of previousMessages) {
+            const msgChars = msg.content.length;
+            if (totalChars + msgChars > MAX_HISTORY_CHARS) {
+              break;
+            }
+            filteredHistory.push(msg);
+            totalChars += msgChars;
+          }
+        }
+
         try {
           for await (const chunk of fetchAIResponse({
             provider: useTalkEchoAPI ? undefined : provider,
             selectedProvider: selectedAIProvider,
             systemPrompt: prompt,
-            history: previousMessages,
+            history: useHistory ? filteredHistory : [],  // Stateless for STT, with limited history for manual Q&A
             userMessage: transcription,
             imagesBase64: [],
           })) {
@@ -868,11 +892,12 @@ export function useSystemAudio() {
 
       const previousMessages = buildConversationHistory();
 
+      // Q&A mode: manual input with full conversation history
       await processWithAI(
         trimmed,
         DEFAULT_SYSTEM_PROMPT,
         previousMessages,
-        "manual"
+        "manual"  // Auto-detect: manual source = use history
       );
     },
     [buildConversationHistory, processWithAI]
