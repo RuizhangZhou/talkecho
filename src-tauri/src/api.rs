@@ -88,24 +88,9 @@ pub struct AudioResponse {
     error: Option<String>,
 }
 
-// Chat API Structs
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ChatRequest {
-    user_message: String,
-    system_prompt: Option<String>,
-    image_base64: Option<serde_json::Value>, // Can be string or array
-    history: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ChatResponse {
-    success: bool,
-    message: Option<String>,
-    error: Option<String>,
-}
-
 // Model API Structs
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
 pub struct Model {
     provider: String,
     name: String,

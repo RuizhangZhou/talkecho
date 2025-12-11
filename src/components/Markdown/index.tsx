@@ -61,28 +61,44 @@ function createResource<T>(promise: Promise<T>): Resource<T> {
   };
 }
 
+// Supported languages for syntax highlighting (only common ones to reduce bundle size)
+const SUPPORTED_LANGUAGES = new Set([
+  'javascript', 'typescript', 'jsx', 'tsx',
+  'python', 'java', 'c', 'cpp', 'csharp',
+  'go', 'rust', 'ruby', 'php',
+  'html', 'css', 'scss', 'less',
+  'json', 'yaml', 'xml', 'markdown',
+  'bash', 'shell', 'sql',
+]);
+
 const HighlightedPre = React.memo(
   ({ children, language, ...props }: HighlightedPre) => {
     const resource = React.useMemo(
       () =>
         createResource(
           (async () => {
-            const { codeToTokens, bundledLanguages } = await import("shiki");
-
-            if (!(language in bundledLanguages)) {
+            // Check if language is supported
+            if (!SUPPORTED_LANGUAGES.has(language)) {
               return null;
             }
 
-            const { tokens } = await codeToTokens(children, {
-              lang: language as keyof typeof bundledLanguages,
-              defaultColor: false,
-              themes: {
-                light: "github-light",
-                dark: "github-dark",
-              },
-            });
+            try {
+              const { codeToTokens } = await import("shiki");
 
-            return { tokens };
+              const { tokens } = await codeToTokens(children, {
+                lang: language as any, // Type assertion for supported languages
+                defaultColor: false,
+                themes: {
+                  light: "github-light",
+                  dark: "github-dark",
+                },
+              });
+
+              return { tokens };
+            } catch (error) {
+              console.warn(`Failed to load syntax highlighting for ${language}:`, error);
+              return null;
+            }
           })()
         ),
       [children, language]

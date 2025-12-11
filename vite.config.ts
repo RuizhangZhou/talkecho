@@ -13,6 +13,31 @@ export default defineConfig(async () => ({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  // Build optimizations
+  build: {
+    chunkSizeWarningLimit: 1000, // Increase limit to 1MB
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // Core React libraries
+          'react-vendor': ['react', 'react-dom', 'react-router-dom'],
+          // UI components
+          'ui-vendor': ['lucide-react', 'recharts'],
+          // Markdown rendering
+          'markdown-vendor': [
+            'react-markdown',
+            'remark-gfm',
+            'remark-math',
+            'rehype-raw',
+            'rehype-sanitize',
+            'rehype-katex',
+          ],
+          // Syntax highlighting (loaded dynamically but still chunked separately)
+          'shiki-vendor': ['shiki'],
+        },
+      },
+    },
+  },
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors
