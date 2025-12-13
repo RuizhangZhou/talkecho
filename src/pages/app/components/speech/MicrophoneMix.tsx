@@ -22,12 +22,12 @@ export const MicrophoneMix = ({
               title="Include Microphone"
               description={
                 includeMicrophone
-                  ? `Capturing system audio + microphone input${
+                  ? `Recording both system audio and your microphone${
                       microphoneDeviceName
                         ? ` (${microphoneDeviceName})`
                         : ""
                     }`
-                  : "Enable to mix your microphone input with system audio for complete conversation recording"
+                  : "Enable to record your microphone alongside system audio for complete conversation capture"
               }
             />
           </div>

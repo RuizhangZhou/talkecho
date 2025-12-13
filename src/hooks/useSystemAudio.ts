@@ -274,7 +274,6 @@ export function useSystemAudio() {
     }
     micVadInstanceRef.current.start();
     setMicVadListening(true);
-    console.log("Microphone VAD started");
   }, [micVadLoading, micVadErrored]);
 
   const pauseMicVad = useCallback(() => {
@@ -283,7 +282,6 @@ export function useSystemAudio() {
     }
     micVadInstanceRef.current.pause();
     setMicVadListening(false);
-    console.log("Microphone VAD stopped");
   }, []);
 
   // Control microphone VAD based on includeMicrophone and capturingçŠ¶æ€
@@ -292,8 +290,11 @@ export function useSystemAudio() {
       if (!micVadListening) {
         startMicVad();
       }
-    } else if (micVadListening) {
-      pauseMicVad();
+    } else {
+      // Always pause when includeMicrophone is false or not capturing
+      if (micVadListening) {
+        pauseMicVad();
+      }
     }
   }, [includeMicrophone, capturing, micVadListening, startMicVad, pauseMicVad]);
 
@@ -334,6 +335,32 @@ export function useSystemAudio() {
         console.error("Failed to load microphone mixing setting:", error);
       }
     }
+  }, []);
+
+  // Listen for includeMicrophone setting changes from SystemAudioSettings (across windows)
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+
+    const setupListener = async () => {
+      try {
+        unlisten = await listen<{ value: boolean }>("includeMicrophoneChanged", (event) => {
+          const newValue = event.payload?.value;
+          if (typeof newValue === "boolean") {
+            setIncludeMicrophone(newValue);
+          }
+        });
+      } catch (error) {
+        console.error("Failed to listen for includeMicrophoneChanged event:", error);
+      }
+    };
+
+    setupListener();
+
+    return () => {
+      if (unlisten) {
+        unlisten();
+      }
+    };
   }, []);
 
   // Load quick actions from localStorage on mount
@@ -393,9 +420,7 @@ export function useSystemAudio() {
         });
 
         // Speech discarded (too short)
-        discardedUnlisten = await listen("speech-discarded", (event) => {
-          const reason = event.payload as string;
-          console.log("Speech discarded:", reason);
+        discardedUnlisten = await listen("speech-discarded", () => {
           // Don't show error - this is expected behavior
         });
       } catch (err) {
@@ -1352,5 +1377,3 @@ export function useSystemAudio() {
     micVAD,
   };
 }
-
-

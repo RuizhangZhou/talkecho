@@ -4,6 +4,7 @@ import { Context } from "@/pages/app/components/speech/Context";
 import { VadConfigPanel } from "@/pages/app/components/speech/VadConfigPanel";
 import { useState, useEffect, useCallback } from "react";
 import { safeLocalStorage } from "@/lib";
+import { emit } from "@tauri-apps/api/event";
 import { STORAGE_KEYS } from "@/config";
 import type { VadConfig } from "@/hooks/useSystemAudio";
 
@@ -74,6 +75,10 @@ export const SystemAudioSettings = () => {
       STORAGE_KEYS.SYSTEM_AUDIO_INCLUDE_MICROPHONE,
       value.toString()
     );
+    // Emit Tauri event so other windows (e.g. system audio overlay) can react
+    emit("includeMicrophoneChanged", { value }).catch((error) => {
+      console.error("Failed to emit includeMicrophoneChanged event:", error);
+    });
   }, []);
 
   const setUseSystemPrompt = useCallback((value: boolean) => {
@@ -111,14 +116,14 @@ export const SystemAudioSettings = () => {
   };
 
   return (
-    <div className="space-y-4 border rounded-lg p-4">
+    <div className="space-y-4">
       <Header
-        title="System Audio"
-        description="Configure system audio capture settings"
+        title="Audio Capture Settings"
+        description="Configure audio capture, voice detection, and AI context settings"
       />
 
-      {/* Microphone Mixing */}
-      <div className="space-y-2">
+      {/* Include Microphone - Top Level Setting */}
+      <div className="border rounded-lg p-4">
         <MicrophoneMix
           includeMicrophone={includeMicrophone}
           setIncludeMicrophone={setIncludeMicrophone}
@@ -127,7 +132,7 @@ export const SystemAudioSettings = () => {
       </div>
 
       {/* Context Settings */}
-      <div className="space-y-2">
+      <div className="border rounded-lg p-4">
         <Context
           useSystemPrompt={useSystemPrompt}
           setUseSystemPrompt={setUseSystemPrompt}
@@ -137,7 +142,7 @@ export const SystemAudioSettings = () => {
       </div>
 
       {/* VAD Configuration */}
-      <div className="space-y-2">
+      <div className="border rounded-lg p-4">
         <VadConfigPanel vadConfig={vadConfig} onUpdate={updateVadConfiguration} />
       </div>
     </div>
