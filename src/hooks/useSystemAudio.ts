@@ -40,7 +40,17 @@ export interface VadConfig {
 const DISPLAY_SAMPLE_RATE = 44100;
 const MIC_VAD_SAMPLE_RATE = 16000;
 const MIC_VAD_FRAME_SAMPLES = 512;
-const DEFAULT_USER_SPEAKING_THRESHOLD = 0.6;
+// Higher = stricter detection of user speech for microphone VAD
+const DEFAULT_USER_SPEAKING_THRESHOLD = 0.8;
+
+// Mic VAD tuning (front-end @ricky0123/vad-web)
+// These are conservative defaults to reduce false positives
+const MIC_VAD_TUNING = {
+  positiveSpeechThreshold: 0.8,
+  negativeSpeechThreshold: 0.4,
+  minSpeechFrames: 5,
+  preSpeechPadFrames: 1,
+} as const;
 
 
 // OPTIMIZED VAD defaults - matches backend exactly for perfect performance
@@ -218,6 +228,10 @@ export function useSystemAudio() {
         const vad = await MicVAD.new({
           additionalAudioConstraints: audioConstraints,
           frameSamples: MIC_VAD_FRAME_SAMPLES,
+          positiveSpeechThreshold: MIC_VAD_TUNING.positiveSpeechThreshold,
+          negativeSpeechThreshold: MIC_VAD_TUNING.negativeSpeechThreshold,
+          minSpeechFrames: MIC_VAD_TUNING.minSpeechFrames,
+          preSpeechPadFrames: MIC_VAD_TUNING.preSpeechPadFrames,
           onFrameProcessed: (probabilities) => {
             setMicVadUserSpeaking(
               probabilities.isSpeech > DEFAULT_USER_SPEAKING_THRESHOLD
