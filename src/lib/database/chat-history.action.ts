@@ -25,6 +25,7 @@ interface DbMessage {
   content: string;
   timestamp: number;
   attached_files: string | null; // JSON string
+  source?: "system_audio" | "microphone" | null;
 }
 
 /**
@@ -121,7 +122,7 @@ export async function createConversation(
         : null;
 
       await db.execute(
-        "INSERT INTO messages (id, conversation_id, role, content, timestamp, attached_files) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO messages (id, conversation_id, role, content, timestamp, attached_files, source) VALUES (?, ?, ?, ?, ?, ?, ?)",
         [
           message.id,
           conversation.id,
@@ -129,6 +130,7 @@ export async function createConversation(
           message.content,
           message.timestamp,
           attachedFilesJson,
+          message.source ?? null,
         ]
       );
     }
@@ -190,6 +192,7 @@ export async function getAllConversations(): Promise<ChatConversation[]> {
           content: msg.content,
           timestamp: msg.timestamp,
           attachedFiles: safeJsonParse(msg.attached_files, undefined),
+          source: msg.source ?? undefined,
         })) || [],
     }));
   } catch (error) {
@@ -241,6 +244,7 @@ export async function getConversationById(
         content: msg.content,
         timestamp: msg.timestamp,
         attachedFiles: safeJsonParse(msg.attached_files, undefined),
+        source: msg.source ?? undefined,
       })),
     };
   } catch (error) {
@@ -296,7 +300,7 @@ export async function updateConversation(
           : null;
 
         await db.execute(
-          "INSERT INTO messages (id, conversation_id, role, content, timestamp, attached_files) VALUES (?, ?, ?, ?, ?, ?)",
+          "INSERT INTO messages (id, conversation_id, role, content, timestamp, attached_files, source) VALUES (?, ?, ?, ?, ?, ?, ?)",
           [
             message.id,
             conversation.id,
@@ -304,6 +308,7 @@ export async function updateConversation(
             message.content,
             message.timestamp,
             attachedFilesJson,
+            message.source ?? null,
           ]
         );
       }
@@ -316,7 +321,7 @@ export async function updateConversation(
       for (const msg of existingMessages) {
         await db
           .execute(
-            "INSERT INTO messages (id, conversation_id, role, content, timestamp, attached_files) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO messages (id, conversation_id, role, content, timestamp, attached_files, source) VALUES (?, ?, ?, ?, ?, ?, ?)",
             [
               msg.id,
               msg.conversation_id,
@@ -324,6 +329,7 @@ export async function updateConversation(
               msg.content,
               msg.timestamp,
               msg.attached_files,
+              msg.source ?? null,
             ]
           )
           .catch(() => {});
@@ -515,7 +521,7 @@ export async function migrateLocalStorageToSQLite(): Promise<{
               : null;
 
             await db.execute(
-              "INSERT INTO messages (id, conversation_id, role, content, timestamp, attached_files) VALUES (?, ?, ?, ?, ?, ?)",
+              "INSERT INTO messages (id, conversation_id, role, content, timestamp, attached_files, source) VALUES (?, ?, ?, ?, ?, ?, ?)",
               [
                 message.id,
                 conversation.id,
@@ -523,6 +529,7 @@ export async function migrateLocalStorageToSQLite(): Promise<{
                 message.content,
                 message.timestamp || Date.now(),
                 attachedFilesJson,
+                (message as any).source ?? null,
               ]
             );
           }

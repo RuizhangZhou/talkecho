@@ -17,5 +17,12 @@ pub fn migrations() -> Vec<Migration> {
             sql: include_str!("migrations/chat-history.sql"),
             kind: MigrationKind::Up,
         },
+        // Migration 3: Add source column to messages for dual-track audio
+        Migration {
+            version: 3,
+            description: "add_message_source_column",
+            sql: include_str!("migrations/chat-history-add-source.sql"),
+            kind: MigrationKind::Up,
+        },
     ]
 }
