@@ -1,4 +1,4 @@
-import type { ChatConversation } from "@/hooks/useSystemAudio";
+import type { ChatConversation } from "@/hooks/useAudioOverlay";
 import { Button, Card, Markdown } from "@/components";
 import {
   BotIcon,

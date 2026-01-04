@@ -6,20 +6,21 @@ import { useState, useEffect, useCallback } from "react";
 import { safeLocalStorage } from "@/lib";
 import { emit } from "@tauri-apps/api/event";
 import { STORAGE_KEYS } from "@/config";
-import type { VadConfig } from "@/hooks/useSystemAudio";
+import { invoke } from "@tauri-apps/api/core";
+import type { VadConfig } from "@/hooks/useAudioOverlay";
+import { DEFAULT_VAD_CONFIG, LEGACY_DEFAULT_VAD_CONFIG } from "@/hooks/useAudioOverlay";
 
-// Default VAD configuration (same as in useSystemAudio)
-const DEFAULT_VAD_CONFIG: VadConfig = {
-  enabled: true,
-  hop_size: 1024,
-  sensitivity_rms: 0.012,
-  peak_threshold: 0.035,
-  silence_chunks: 45,
-  min_speech_chunks: 7,
-  pre_speech_chunks: 12,
-  noise_gate_threshold: 0.003,
-  max_recording_duration_secs: 180,
-};
+const isLegacyDefaultVadConfig = (config: VadConfig) =>
+  config.enabled === LEGACY_DEFAULT_VAD_CONFIG.enabled &&
+  config.hop_size === LEGACY_DEFAULT_VAD_CONFIG.hop_size &&
+  config.sensitivity_rms === LEGACY_DEFAULT_VAD_CONFIG.sensitivity_rms &&
+  config.peak_threshold === LEGACY_DEFAULT_VAD_CONFIG.peak_threshold &&
+  config.silence_chunks === LEGACY_DEFAULT_VAD_CONFIG.silence_chunks &&
+  config.min_speech_chunks === LEGACY_DEFAULT_VAD_CONFIG.min_speech_chunks &&
+  config.pre_speech_chunks === LEGACY_DEFAULT_VAD_CONFIG.pre_speech_chunks &&
+  config.noise_gate_threshold === LEGACY_DEFAULT_VAD_CONFIG.noise_gate_threshold &&
+  config.max_recording_duration_secs ===
+    LEGACY_DEFAULT_VAD_CONFIG.max_recording_duration_secs;
 
 export const SystemAudioSettings = () => {
   // State for microphone mixing
@@ -60,8 +61,22 @@ export const SystemAudioSettings = () => {
     const savedVadConfig = safeLocalStorage.getItem("vad_config");
     if (savedVadConfig) {
       try {
-        const parsed = JSON.parse(savedVadConfig);
-        setVadConfigState(parsed);
+        const parsed = JSON.parse(savedVadConfig) as Partial<VadConfig>;
+        const normalized: VadConfig = { ...DEFAULT_VAD_CONFIG, ...parsed };
+        const shouldMigrate = isLegacyDefaultVadConfig(normalized);
+        const nextConfig = shouldMigrate ? { ...DEFAULT_VAD_CONFIG } : normalized;
+
+        setVadConfigState(nextConfig);
+
+        if (shouldMigrate) {
+          safeLocalStorage.setItem("vad_config", JSON.stringify(nextConfig));
+          emit("vadConfigChanged", { config: nextConfig }).catch((error) => {
+            console.error("Failed to emit vadConfigChanged event:", error);
+          });
+          invoke("update_vad_config", { config: nextConfig }).catch((error) => {
+            console.error("Failed to invoke update_vad_config:", error);
+          });
+        }
       } catch (error) {
         console.error("Failed to load VAD config:", error);
       }
@@ -108,6 +123,14 @@ export const SystemAudioSettings = () => {
   const updateVadConfiguration = useCallback((config: VadConfig) => {
     setVadConfigState(config);
     safeLocalStorage.setItem("vad_config", JSON.stringify(config));
+
+    // Keep the running overlay + backend capture in sync (cross-window).
+    emit("vadConfigChanged", { config }).catch((error) => {
+      console.error("Failed to emit vadConfigChanged event:", error);
+    });
+    invoke("update_vad_config", { config }).catch((error) => {
+      console.error("Failed to invoke update_vad_config:", error);
+    });
   }, []);
 
   // Get microphone device name

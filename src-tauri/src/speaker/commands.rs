@@ -33,12 +33,12 @@ impl Default for VadConfig {
         Self {
             enabled: true,
             hop_size: 1024,
-            sensitivity_rms: 0.012, // Much less sensitive - only real speech
-            peak_threshold: 0.035,  // Higher threshold - filters clicks/noise
+            sensitivity_rms: 0.016, // Stricter - reduce false positives from noise
+            peak_threshold: 0.045,  // Higher threshold - filters clicks/noise
             silence_chunks: 45,     // ~1.0s of silence before stopping
-            min_speech_chunks: 7,   // ~0.16s - captures short answers
+            min_speech_chunks: 10,  // ~0.23s - more confidence before STT
             pre_speech_chunks: 12,  // ~0.27s - enough to catch word start
-            noise_gate_threshold: 0.003, // Stronger noise filtering
+            noise_gate_threshold: 0.004, // Stronger noise filtering
             max_recording_duration_secs: 180, // 3 minutes default
         }
     }

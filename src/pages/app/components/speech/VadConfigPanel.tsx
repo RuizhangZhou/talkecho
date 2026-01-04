@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Button, Card, Label, Slider, Switch } from "@/components";
 import { ArrowDownIcon, ArrowUpIcon, SettingsIcon } from "lucide-react";
-import { VadConfig } from "@/hooks/useSystemAudio";
+import { DEFAULT_VAD_CONFIG, VadConfig } from "@/hooks/useAudioOverlay";
 
 interface VadConfigPanelProps {
   vadConfig: VadConfig;
@@ -14,8 +14,8 @@ const PRESETS = {
     name: "Quiet Environment",
     description: "More sensitive, picks up quiet speech",
     config: {
-      sensitivity_rms: 0.008,
-      noise_gate_threshold: 0.002,
+      sensitivity_rms: 0.01,
+      noise_gate_threshold: 0.0025,
       silence_chunks: 35,
     },
   },
@@ -23,17 +23,17 @@ const PRESETS = {
     name: "Normal (Recommended)",
     description: "Balanced for most environments",
     config: {
-      sensitivity_rms: 0.012,
-      noise_gate_threshold: 0.003,
-      silence_chunks: 45,
+      sensitivity_rms: DEFAULT_VAD_CONFIG.sensitivity_rms,
+      noise_gate_threshold: DEFAULT_VAD_CONFIG.noise_gate_threshold,
+      silence_chunks: DEFAULT_VAD_CONFIG.silence_chunks,
     },
   },
   noisy: {
     name: "Noisy Environment",
     description: "Less sensitive, reduces false positives",
     config: {
-      sensitivity_rms: 0.020,
-      noise_gate_threshold: 0.005,
+      sensitivity_rms: 0.022,
+      noise_gate_threshold: 0.006,
       silence_chunks: 55,
     },
   },
@@ -150,7 +150,7 @@ export const VadConfigPanel = ({
                     handleUpdate({ sensitivity_rms: value / 1000 })
                   }
                   min={1}
-                  max={10}
+                  max={30}
                   step={0.5}
                   className="w-full"
                 />
@@ -200,7 +200,7 @@ export const VadConfigPanel = ({
                     handleUpdate({ noise_gate_threshold: value / 1000 })
                   }
                   min={0}
-                  max={5}
+                  max={10}
                   step={0.1}
                   className="w-full"
                 />
@@ -251,7 +251,7 @@ export const VadConfigPanel = ({
                     handleUpdate({ noise_gate_threshold: value / 1000 })
                   }
                   min={0}
-                  max={5}
+                  max={10}
                   step={0.1}
                   className="w-full"
                 />
@@ -268,17 +268,7 @@ export const VadConfigPanel = ({
               variant="outline"
               size="sm"
               onClick={() => {
-                const defaultConfig: VadConfig = {
-                  enabled: true,
-                  hop_size: 1024,
-                  sensitivity_rms: 0.012,
-                  peak_threshold: 0.035,
-                  silence_chunks: 45,
-                  min_speech_chunks: 7,
-                  pre_speech_chunks: 12,
-                  noise_gate_threshold: 0.003,
-                  max_recording_duration_secs: 180, // 3 minutes
-                };
+                const defaultConfig: VadConfig = { ...DEFAULT_VAD_CONFIG };
                 setLocalConfig(defaultConfig);
                 onUpdate(defaultConfig);
               }}

@@ -92,22 +92,11 @@ async function validateAudioQuality(audio: File | Blob): Promise<{
 
 // Whisper hallucination patterns (known false positives)
 const WHISPER_HALLUCINATIONS = [
-  // Common hallucinations
-  /^thank you\.?$/i,
-  /^thanks\.?$/i,
-  /^vielen dank\.?$/i,
-  /^vielen danke\.?$/i,
-  /^merci\.?$/i,
-  /^gracias\.?$/i,
-  /^grazie\.?$/i,
-  /^obrigado\.?$/i,
-  // Music/sound artifacts
+  // Non-speech artifacts
   /^\[.*\]$/i, // [Music], [Applause], etc.
   /^♪.*♪$/i,
   // Empty or whitespace only
   /^\s*$/,
-  // Very short gibberish (1-2 chars)
-  /^[a-z]{1,2}\.?$/i,
   // Subtitle artifacts
   /^www\./i,
 ];
@@ -126,8 +115,8 @@ function isLikelyHallucination(text: string): boolean {
   }
 
   // Additional heuristics
-  // Too short (less than 3 characters after trimming)
-  if (trimmed.length < 3) {
+  // Too short (single character after trimming)
+  if (trimmed.length < 2) {
     return true;
   }
 

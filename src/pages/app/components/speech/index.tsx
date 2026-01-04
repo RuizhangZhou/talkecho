@@ -16,11 +16,11 @@ import { Header } from "./Header";
 import { SetupInstructions } from "./SetupInstructions";
 import { OperationSection } from "./OperationSection";
 import { PermissionFlow } from "./PermissionFlow";
-import { useSystemAudioType } from "@/hooks";
+import { useAudioOverlayType } from "@/hooks";
 import { useApp } from "@/contexts";
 import { StatusIndicator } from "./StatusIndicator";
 
-export const SystemAudio = (props: useSystemAudioType) => {
+export const SystemAudio = (props: useAudioOverlayType) => {
   const {
     capturing,
     isProcessing,

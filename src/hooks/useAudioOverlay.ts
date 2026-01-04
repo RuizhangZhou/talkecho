@@ -41,30 +41,57 @@ const DISPLAY_SAMPLE_RATE = 44100;
 const MIC_VAD_SAMPLE_RATE = 16000;
 const MIC_VAD_FRAME_SAMPLES = 512;
 // Higher = stricter detection of user speech for microphone VAD
-const DEFAULT_USER_SPEAKING_THRESHOLD = 0.8;
+const DEFAULT_USER_SPEAKING_THRESHOLD = 0.85;
 
 // Mic VAD tuning (front-end @ricky0123/vad-web)
 // These are conservative defaults to reduce false positives
 const MIC_VAD_TUNING = {
-  positiveSpeechThreshold: 0.8,
-  negativeSpeechThreshold: 0.4,
-  minSpeechFrames: 5,
+  positiveSpeechThreshold: 0.85,
+  negativeSpeechThreshold: 0.5,
+  minSpeechFrames: 7,
   preSpeechPadFrames: 1,
 } as const;
 
 
 // OPTIMIZED VAD defaults - matches backend exactly for perfect performance
-const DEFAULT_VAD_CONFIG: VadConfig = {
+export const DEFAULT_VAD_CONFIG: VadConfig = {
   enabled: true,
   hop_size: 1024,
-  sensitivity_rms: 0.012, // Much less sensitive - only real speech
-  peak_threshold: 0.035, // Higher threshold - filters clicks/noise
+  sensitivity_rms: 0.016, // Stricter - reduce false positives from noise
+  peak_threshold: 0.045, // Higher threshold - filters clicks/noise
   silence_chunks: 45, // ~1.0s of required silence
-  min_speech_chunks: 7, // ~0.16s - captures short answers
+  min_speech_chunks: 10, // ~0.23s - more confidence before STT
   pre_speech_chunks: 12, // ~0.27s - enough to catch word start
-  noise_gate_threshold: 0.003, // Stronger noise filtering
+  noise_gate_threshold: 0.004, // Stronger noise filtering
   max_recording_duration_secs: 180, // 3 minutes default
 };
+
+// Previous defaults kept for one-time localStorage migration.
+export const LEGACY_DEFAULT_VAD_CONFIG: VadConfig = {
+  enabled: true,
+  hop_size: 1024,
+  sensitivity_rms: 0.012,
+  peak_threshold: 0.035,
+  silence_chunks: 45,
+  min_speech_chunks: 7,
+  pre_speech_chunks: 12,
+  noise_gate_threshold: 0.003,
+  max_recording_duration_secs: 180,
+};
+
+const approxEqual = (a: number, b: number, epsilon = 1e-6) =>
+  Math.abs(a - b) <= epsilon;
+
+const isVadConfigEqual = (a: VadConfig, b: VadConfig) =>
+  a.enabled === b.enabled &&
+  a.hop_size === b.hop_size &&
+  approxEqual(a.sensitivity_rms, b.sensitivity_rms) &&
+  approxEqual(a.peak_threshold, b.peak_threshold) &&
+  a.silence_chunks === b.silence_chunks &&
+  a.min_speech_chunks === b.min_speech_chunks &&
+  a.pre_speech_chunks === b.pre_speech_chunks &&
+  approxEqual(a.noise_gate_threshold, b.noise_gate_threshold) &&
+  a.max_recording_duration_secs === b.max_recording_duration_secs;
 
 // Chat message interface (reusing from useCompletion)
 interface ChatMessage {
@@ -84,9 +111,9 @@ export interface ChatConversation {
   updatedAt: number;
 }
 
-export type useSystemAudioType = ReturnType<typeof useSystemAudio>;
+export type useAudioOverlayType = ReturnType<typeof useAudioOverlay>;
 
-export function useSystemAudio() {
+export function useAudioOverlay() {
   const { resizeWindow } = useWindowResize();
   const globalShortcuts = useGlobalShortcuts();
   const [isPopoverOpen, setIsPopoverOpen] = useState(false);
@@ -331,8 +358,17 @@ export function useSystemAudio() {
     const savedVadConfig = safeLocalStorage.getItem("vad_config");
     if (savedVadConfig) {
       try {
-        const parsed = JSON.parse(savedVadConfig);
-        setVadConfig(parsed);
+        const parsed = JSON.parse(savedVadConfig) as Partial<VadConfig>;
+        const normalized: VadConfig = { ...DEFAULT_VAD_CONFIG, ...parsed };
+        const migrated = isVadConfigEqual(normalized, LEGACY_DEFAULT_VAD_CONFIG)
+          ? { ...DEFAULT_VAD_CONFIG }
+          : normalized;
+
+        setVadConfig(migrated);
+        safeLocalStorage.setItem("vad_config", JSON.stringify(migrated));
+        invoke("update_vad_config", { config: migrated }).catch((error) => {
+          console.error("Failed to update VAD config:", error);
+        });
       } catch (error) {
         console.error("Failed to load VAD config:", error);
       }
@@ -365,6 +401,38 @@ export function useSystemAudio() {
         });
       } catch (error) {
         console.error("Failed to listen for includeMicrophoneChanged event:", error);
+      }
+    };
+
+    setupListener();
+
+    return () => {
+      if (unlisten) {
+        unlisten();
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+
+    const setupListener = async () => {
+      try {
+        unlisten = await listen<{ config: VadConfig }>(
+          "vadConfigChanged",
+          async (event) => {
+            const newConfig = event.payload?.config;
+            if (!newConfig) return;
+
+            setVadConfig(newConfig);
+            safeLocalStorage.setItem("vad_config", JSON.stringify(newConfig));
+            invoke("update_vad_config", { config: newConfig }).catch((error) => {
+              console.error("Failed to update VAD config:", error);
+            });
+          }
+        );
+      } catch (error) {
+        console.error("Failed to listen for vadConfigChanged event:", error);
       }
     };
 

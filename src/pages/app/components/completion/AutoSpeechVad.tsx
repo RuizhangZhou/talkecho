@@ -29,7 +29,12 @@ const AutoSpeechVADInternal = ({
     : { deviceId: "default" };
 
   const vad = useMicVAD({
-    userSpeakingThreshold: 0.6,
+    userSpeakingThreshold: 0.85,
+    positiveSpeechThreshold: 0.85,
+    negativeSpeechThreshold: 0.5,
+    minSpeechFrames: 7,
+    preSpeechPadFrames: 1,
+    frameSamples: 512,
     startOnLoad: true,
     additionalAudioConstraints: audioConstraints,
     onSpeechEnd: async (audio) => {
