@@ -2,7 +2,7 @@
 import { UseCompletionReturn } from "@/types";
 import { useMicVAD } from "@ricky0123/vad-react";
 import { LoaderCircleIcon, MicIcon, MicOffIcon } from "lucide-react";
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Button } from "@/components";
 import { useApp } from "@/contexts";
 import { floatArrayToWav } from "@/lib/utils";
@@ -23,6 +23,8 @@ const AutoSpeechVADInternal = ({
 }: AutoSpeechVADProps) => {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const { selectedSttProvider, allSttProviders } = useApp();
+  const lastTranscriptionRef = useRef<string>("");
+  const lastTranscriptionTimeRef = useRef<number>(0);
 
   const audioConstraints: MediaTrackConstraints = microphoneDeviceId
     ? { deviceId: { exact: microphoneDeviceId } }
@@ -38,6 +40,12 @@ const AutoSpeechVADInternal = ({
     startOnLoad: true,
     additionalAudioConstraints: audioConstraints,
     onSpeechEnd: async (audio) => {
+      // Prevent concurrent transcription requests
+      if (isTranscribing) {
+        console.log("🚫 Skipping concurrent transcription request");
+        return;
+      }
+
       try {
         // convert float32array to blob
         const audioBlob = floatArrayToWav(audio, 16000, "wav");
@@ -80,6 +88,22 @@ const AutoSpeechVADInternal = ({
         });
 
         if (transcription) {
+          // Deduplicate: Skip if same transcription within 3 seconds
+          const now = Date.now();
+          const timeSinceLastTranscription = now - lastTranscriptionTimeRef.current;
+
+          if (
+            transcription === lastTranscriptionRef.current &&
+            timeSinceLastTranscription < 3000
+          ) {
+            console.log(`🚫 Skipping duplicate transcription: "${transcription}" (${timeSinceLastTranscription}ms ago)`);
+            return;
+          }
+
+          // Update refs
+          lastTranscriptionRef.current = transcription;
+          lastTranscriptionTimeRef.current = now;
+
           submit(transcription);
         }
       } catch (error) {

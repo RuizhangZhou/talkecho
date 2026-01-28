@@ -251,25 +251,26 @@ export const useChatCompletion = (
               timestamp: timestamp + MESSAGE_ID_OFFSET,
             };
 
+            // Create updated messages array by checking if assistant message exists
+            const messagesWithoutNewAssistant = [...updatedMessages.messages];
+            const lastMessage = messagesWithoutNewAssistant[
+              messagesWithoutNewAssistant.length - 1
+            ];
+
+            let finalMessages;
+            if (lastMessage?.role === "assistant" && lastMessage.id === assistantMsg.id) {
+              // Update existing assistant message (streaming update)
+              finalMessages = [...messagesWithoutNewAssistant];
+              finalMessages[finalMessages.length - 1] = assistantMsg;
+            } else {
+              // Add new assistant message (first chunk)
+              finalMessages = [...messagesWithoutNewAssistant, assistantMsg];
+            }
+
             const updatedWithResponse = {
               ...updatedMessages,
-              messages: [...updatedMessages.messages, assistantMsg],
+              messages: finalMessages,
             };
-
-            // Check if assistant message already exists
-            const lastMessage =
-              updatedWithResponse.messages[
-                updatedWithResponse.messages.length - 1
-              ];
-            if (lastMessage.role === "assistant") {
-              // Update existing assistant message
-              updatedWithResponse.messages[
-                updatedWithResponse.messages.length - 1
-              ] = assistantMsg;
-            } else {
-              // Add new assistant message
-              updatedWithResponse.messages.push(assistantMsg);
-            }
 
             setMessages(updatedWithResponse);
 
