@@ -5,6 +5,7 @@
   getByPath,
   getStreamingContent,
 } from "./common.function";
+import { MARKDOWN_FORMATTING_INSTRUCTIONS } from "@/config";
 import { Message, TYPE_PROVIDER } from "@/types";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { invoke } from "@tauri-apps/api/core";
@@ -34,6 +35,10 @@ function buildEnhancedSystemPrompt(baseSystemPrompt?: string): string {
   );
   if (languageOption?.prompt?.trim()) {
     prompts.push(languageOption.prompt);
+  }
+
+  if (MARKDOWN_FORMATTING_INSTRUCTIONS?.trim()) {
+    prompts.push(MARKDOWN_FORMATTING_INSTRUCTIONS);
   }
 
   return prompts.join(" ");

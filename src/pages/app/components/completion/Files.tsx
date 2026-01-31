@@ -8,6 +8,7 @@ import { Button, ScrollArea } from "@/components";
 import { PaperclipIcon, PlusIcon, TrashIcon } from "lucide-react";
 import { UseCompletionReturn } from "@/types";
 import { MAX_FILES } from "@/config";
+import { useApp } from "@/contexts";
 
 export const Files = ({
   attachedFiles,
@@ -18,6 +19,7 @@ export const Files = ({
   isFilesPopoverOpen,
   setIsFilesPopoverOpen,
 }: UseCompletionReturn) => {
+  const { supportsImages } = useApp();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleAddMoreClick = () => {
@@ -41,9 +43,13 @@ export const Files = ({
                 setIsFilesPopoverOpen(true);
               }
             }}
-            disabled={isLoading}
+            disabled={isLoading || !supportsImages}
             className="cursor-pointer"
-            title="Attach images"
+            title={
+              supportsImages
+                ? "Attach images"
+                : "Image upload not supported by current AI provider"
+            }
           >
             <PaperclipIcon className="h-4 w-4" />
           </Button>

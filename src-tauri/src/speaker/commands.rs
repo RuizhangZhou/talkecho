@@ -1,5 +1,5 @@
 ﻿// TalkEcho AI Speech Detection, and capture system audio (speaker output) as a stream of f32 samples.
-use crate::speaker::SpeakerInput;
+use crate::speaker::{AudioDevice, SpeakerInput};
 use anyhow::Result;
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use futures_util::StreamExt;
@@ -607,5 +607,21 @@ pub fn get_audio_sample_rate(_app: AppHandle) -> Result<u32, String> {
     let sr = stream.sample_rate();
 
     Ok(sr)
+}
+
+#[tauri::command]
+pub fn get_input_devices() -> Result<Vec<AudioDevice>, String> {
+    crate::speaker::list_input_devices().map_err(|e| {
+        error!("Failed to get input devices: {}", e);
+        format!("Failed to get input devices: {}", e)
+    })
+}
+
+#[tauri::command]
+pub fn get_output_devices() -> Result<Vec<AudioDevice>, String> {
+    crate::speaker::list_output_devices().map_err(|e| {
+        error!("Failed to get output devices: {}", e);
+        format!("Failed to get output devices: {}", e)
+    })
 }
 

@@ -1,4 +1,5 @@
-﻿// TalkEcho windows speaker input and stream
+// TalkEcho Windows speaker input and stream
+use super::AudioDevice;
 use anyhow::Result;
 use futures_util::Stream;
 use std::collections::VecDeque;
@@ -7,23 +8,125 @@ use std::task::{Poll, Waker};
 use std::thread;
 use std::time::Duration;
 use tracing::error;
-use wasapi::{get_default_device, Direction, SampleType, StreamMode, WaveFormat};
+use wasapi::{
+    get_default_device, DeviceCollection, Direction, SampleType, StreamMode, WaveFormat,
+};
+
+pub fn get_input_devices() -> Result<Vec<AudioDevice>> {
+    let mut devices = Vec::new();
+
+    let default_device = get_default_device(&Direction::Capture).ok();
+    let default_id = default_device.as_ref().and_then(|d| d.get_id().ok());
+
+    let collection = DeviceCollection::new(&Direction::Capture)?;
+    let count = collection.get_nbr_devices()?;
+
+    for i in 0..count {
+        if let Ok(device) = collection.get_device_at_index(i) {
+            let name = device
+                .get_friendlyname()
+                .unwrap_or_else(|_| format!("Microphone {}", i));
+            let id = device
+                .get_id()
+                .unwrap_or_else(|_| format!("windows_input_{}", i));
+            let is_default = default_id
+                .as_ref()
+                .map(|def| def == &id)
+                .unwrap_or(false);
+
+            devices.push(AudioDevice {
+                id,
+                name,
+                is_default,
+            });
+        }
+    }
+
+    Ok(devices)
+}
+
+pub fn get_output_devices() -> Result<Vec<AudioDevice>> {
+    let mut devices = Vec::new();
+
+    let default_device = get_default_device(&Direction::Render).ok();
+    let default_id = default_device.as_ref().and_then(|d| d.get_id().ok());
+
+    let collection = DeviceCollection::new(&Direction::Render)?;
+    let count = collection.get_nbr_devices()?;
+
+    for i in 0..count {
+        if let Ok(device) = collection.get_device_at_index(i) {
+            let name = device
+                .get_friendlyname()
+                .unwrap_or_else(|_| format!("Speaker {}", i));
+            let id = device
+                .get_id()
+                .unwrap_or_else(|_| format!("windows_output_{}", i));
+            let is_default = default_id
+                .as_ref()
+                .map(|def| def == &id)
+                .unwrap_or(false);
+
+            devices.push(AudioDevice {
+                id,
+                name,
+                is_default,
+            });
+        }
+    }
+
+    Ok(devices)
+}
+
+fn find_device_by_id(direction: &Direction, device_id: &str) -> Option<wasapi::Device> {
+    let collection = match DeviceCollection::new(direction) {
+        Ok(c) => c,
+        Err(e) => {
+            error!(
+                "[find_device_by_id] Failed to create device collection: {}",
+                e
+            );
+            return None;
+        }
+    };
+
+    let count = match collection.get_nbr_devices() {
+        Ok(c) => c,
+        Err(e) => {
+            error!("[find_device_by_id] Failed to get device count: {}", e);
+            return None;
+        }
+    };
+
+    for i in 0..count {
+        if let Ok(device) = collection.get_device_at_index(i) {
+            if let Ok(id) = device.get_id() {
+                if id == device_id {
+                    return Some(device);
+                }
+            }
+        }
+    }
+
+    error!(
+        "[find_device_by_id] No matching device found for ID: {}",
+        device_id
+    );
+    None
+}
 
 pub struct SpeakerInput {
-    device_index: Option<usize>,
+    device_id: Option<String>,
 }
 
 impl SpeakerInput {
     pub fn new(device_id: Option<String>) -> Result<Self> {
-        let device_index = device_id.and_then(|id| {
-            id.strip_prefix("windows_output_")
-                .and_then(|s| s.parse::<usize>().ok())
-        });
-
-        Ok(Self { device_index })
+        // Store the device_id for later use in stream().
+        let device_id = device_id.filter(|id| !id.is_empty() && id != "default");
+        Ok(Self { device_id })
     }
 
-    // Starts the audio stream
+    // Starts the audio stream.
     pub fn stream(self) -> SpeakerStream {
         let sample_queue = Arc::new(Mutex::new(VecDeque::new()));
         let waker_state = Arc::new(Mutex::new(WakerState {
@@ -35,25 +138,25 @@ impl SpeakerInput {
 
         let queue_clone = sample_queue.clone();
         let waker_clone = waker_state.clone();
-        let device_index = self.device_index;
+        let device_id = self.device_id;
 
         let capture_thread = thread::spawn(move || {
             if let Err(e) =
-                SpeakerStream::capture_audio_loop(queue_clone, waker_clone, init_tx, device_index)
+                SpeakerStream::capture_audio_loop(queue_clone, waker_clone, init_tx, device_id)
             {
-                error!("TalkEcho Audio capture loop failed: {}", e);
+                error!("TalkEcho audio capture loop failed: {}", e);
             }
         });
 
         let actual_sample_rate = match init_rx.recv_timeout(Duration::from_secs(5)) {
             Ok(Ok(rate)) => rate,
             Ok(Err(e)) => {
-                error!("TalkEcho Audio initialization failed: {}", e);
-                44100
+                error!("TalkEcho audio initialization failed: {}", e);
+                44_100
             }
             Err(_) => {
-                error!("TalkEcho Audio initialization timeout");
-                44100
+                error!("TalkEcho audio initialization timeout");
+                44_100
             }
         };
 
@@ -88,19 +191,16 @@ impl SpeakerStream {
         sample_queue: Arc<Mutex<VecDeque<f32>>>,
         waker_state: Arc<Mutex<WakerState>>,
         init_tx: mpsc::Sender<Result<u32>>,
-        device_index: Option<usize>,
+        device_id: Option<String>,
     ) -> Result<()> {
         let init_result = (|| -> Result<_> {
-            let device = match device_index {
-                Some(index) => {
-                    use wasapi::DeviceCollection;
-                    let collection = DeviceCollection::new(&Direction::Render)?;
-                    collection.get_device_at_index(index.try_into()?)?
-                }
+            let device = match device_id.as_deref() {
+                Some(id) => find_device_by_id(&Direction::Render, id)
+                    .unwrap_or(get_default_device(&Direction::Render)?),
                 None => get_default_device(&Direction::Render)?,
             };
-            let mut audio_client = device.get_iaudioclient()?;
 
+            let mut audio_client = device.get_iaudioclient()?;
             let device_format = audio_client.get_mixformat()?;
             let actual_rate = device_format.get_samplespersec();
 
@@ -143,7 +243,7 @@ impl SpeakerStream {
 
                     let mut temp_queue = VecDeque::new();
                     if let Err(e) = render_client.read_from_device_to_deque(&mut temp_queue) {
-                        error!("TalkEcho Failed to read audio data: {}", e);
+                        error!("TalkEcho failed to read audio data: {}", e);
                         continue;
                     }
 
@@ -164,30 +264,26 @@ impl SpeakerStream {
                     }
 
                     if !samples.is_empty() {
-                        // Consistent buffer overflow handling
                         let dropped = {
                             let mut queue = sample_queue.lock().unwrap();
-                            let max_buffer_size = 131072; // 128KB buffer (matching macOS)
+                            let max_buffer_size = 131_072; // 128KB buffer (matching macOS)
 
                             queue.extend(samples.iter());
 
-                            // If buffer exceeds maximum, drop oldest samples
-                            let dropped_count = if queue.len() > max_buffer_size {
+                            if queue.len() > max_buffer_size {
                                 let to_drop = queue.len() - max_buffer_size;
                                 queue.drain(0..to_drop);
                                 to_drop
                             } else {
                                 0
-                            };
-
-                            dropped_count
+                            }
                         };
 
                         if dropped > 0 {
                             error!("Windows buffer overflow - dropped {} samples", dropped);
                         }
 
-                        // Wake up consumer
+                        // Wake up consumer.
                         {
                             let mut state = waker_state.lock().unwrap();
                             if !state.has_data {
@@ -211,7 +307,6 @@ impl SpeakerStream {
     }
 }
 
-// Drops the audio stream
 impl Drop for SpeakerStream {
     fn drop(&mut self) {
         {
@@ -227,11 +322,9 @@ impl Drop for SpeakerStream {
     }
 }
 
-// Stream of f32 audio samples from the speaker
 impl Stream for SpeakerStream {
     type Item = f32;
 
-    // Polls the audio stream
     fn poll_next(
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
@@ -257,7 +350,6 @@ impl Stream for SpeakerStream {
             }
             state.has_data = false;
             state.waker = Some(cx.waker().clone());
-            drop(state);
         }
 
         {
@@ -269,4 +361,3 @@ impl Stream for SpeakerStream {
         }
     }
 }
-

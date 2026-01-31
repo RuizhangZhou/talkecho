@@ -13,12 +13,14 @@ import { STORAGE_KEYS } from "@/config/constants";
 import { safeLocalStorage } from "@/lib/storage";
 import { invoke } from "@tauri-apps/api/core";
 
+type TauriAudioDevice = { id: string; name: string; is_default: boolean };
+
 export const AudioSelection = () => {
   const { selectedAudioDevices, setSelectedAudioDevices } = useApp();
 
   const [devices, setDevices] = useState<{
     input: MediaDeviceInfo[];
-    output: MediaDeviceInfo[];
+    output: TauriAudioDevice[];
   }>({
     input: [],
     output: [],
@@ -53,29 +55,69 @@ export const AudioSelection = () => {
     }
   };
 
+  const restoreOrSetDefaultOutputDevice = (outputDevices: TauriAudioDevice[]) => {
+    const storageKey = STORAGE_KEYS.SELECTED_AUDIO_OUTPUT_DEVICE;
+    const savedDeviceId = safeLocalStorage.getItem(storageKey);
+
+    const shouldRestore =
+      savedDeviceId &&
+      (savedDeviceId === "default" ||
+        outputDevices.some((d) => d.id === savedDeviceId));
+
+    if (shouldRestore) {
+      setSelectedAudioDevices((prev) => ({ ...prev, output: savedDeviceId }));
+      return;
+    }
+
+    // Default to "default" (system default) if available, else first device.
+    const fallbackId =
+      outputDevices.find((d) => d.id === "default")?.id ||
+      outputDevices[0]?.id ||
+      "";
+
+    setSelectedAudioDevices((prev) => ({ ...prev, output: fallbackId }));
+    if (fallbackId) {
+      safeLocalStorage.setItem(storageKey, fallbackId);
+    }
+  };
+
   // Load all audio devices (input and output)
   const loadAudioDevices = async () => {
     setIsLoadingDevices(true);
     try {
-      // Request microphone permission first
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-      });
-      setTimeout(async () => {
-        stream.getTracks().forEach((track) => track.stop());
-      }, 2000);
+      // 1) Microphone devices via Web APIs (works with getUserMedia deviceId constraints)
+      let audioInputs: MediaDeviceInfo[] = [];
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+        });
+        setTimeout(() => {
+          stream.getTracks().forEach((track) => track.stop());
+        }, 2000);
 
-      // Enumerate all audio devices
-      const allDevices = await navigator.mediaDevices.enumerateDevices();
-      console.log(allDevices, "allDevices");
-      const audioInputs = allDevices.filter(
-        (device) => device.kind === "audioinput"
-      );
-      const audioOutputs = allDevices.filter(
-        (device) => device.kind === "audiooutput"
-      );
+        const allDevices = await navigator.mediaDevices.enumerateDevices();
+        audioInputs = allDevices.filter((device) => device.kind === "audioinput");
+      } catch (error) {
+        console.warn("Microphone permission denied or unavailable:", error);
+      }
 
-      setDevices({ input: audioInputs, output: audioOutputs });
+      // 2) System audio output devices via Tauri (uses platform-native IDs for loopback capture)
+      const outputDevices = await invoke<TauriAudioDevice[]>("get_output_devices");
+      const normalizedOutputs = (outputDevices || [])
+        .filter((d) => d && typeof d.id === "string")
+        .map((d) => ({
+          id: d.id,
+          name: d.name,
+          is_default: Boolean(d.is_default),
+        }));
+
+      // Provide a stable "system default" option that follows OS default changes.
+      const outputsWithDefault: TauriAudioDevice[] = [
+        { id: "default", name: "System Default", is_default: false },
+        ...normalizedOutputs,
+      ];
+
+      setDevices({ input: audioInputs, output: outputsWithDefault });
 
       // Restore or set default devices
       restoreOrSetDefaultDevice(
@@ -83,11 +125,7 @@ export const AudioSelection = () => {
         audioInputs,
         STORAGE_KEYS.SELECTED_AUDIO_INPUT_DEVICE
       );
-      restoreOrSetDefaultDevice(
-        "output",
-        audioOutputs,
-        STORAGE_KEYS.SELECTED_AUDIO_OUTPUT_DEVICE
-      );
+      restoreOrSetDefaultOutputDevice(outputsWithDefault);
     } catch (error) {
       console.error("Error loading audio devices:", error);
     } finally {
@@ -270,18 +308,19 @@ export const AudioSelection = () => {
                         ? "No output devices found"
                         : devices.output.find(
                             (output) =>
-                              output.deviceId === selectedAudioDevices.output
-                          )?.label || "Select an output device"}
+                              output.id === selectedAudioDevices.output
+                          )?.name || "Select an output device"}
                     </div>
                   </div>
                 </SelectTrigger>
                 <SelectContent>
                   {devices.output.map((output) => (
-                    <SelectItem key={output.deviceId} value={output.deviceId}>
+                    <SelectItem key={output.id} value={output.id}>
                       <div className="flex items-center gap-2">
                         <HeadphonesIcon className="size-4" />
                         <div className="font-medium truncate">
-                          {output.label}
+                          {output.name}{" "}
+                          {output.id !== "default" && output.is_default && " (Default)"}
                         </div>
                       </div>
                     </SelectItem>
@@ -312,8 +351,8 @@ export const AudioSelection = () => {
               <br />
               Using:{" "}
               {devices.output.find(
-                (output) => output.deviceId === selectedAudioDevices.output
-              )?.label || "Unknown device"}
+                (output) => output.id === selectedAudioDevices.output
+              )?.name || "Unknown device"}
             </div>
           )}
 

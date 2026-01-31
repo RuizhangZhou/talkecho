@@ -28,6 +28,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useMemo,
   useState,
 } from "react";
 
@@ -440,6 +441,17 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     ...customAiProviders,
   ];
 
+  const supportsImages = useMemo(() => {
+    if (talkEchoApiEnabled) return true;
+
+    const provider = allAiProviders.find(
+      (p) => p.id === selectedAIProvider.provider
+    );
+    if (!provider?.curl) return true;
+
+    return provider.curl.includes("{{IMAGE}}");
+  }, [talkEchoApiEnabled, allAiProviders, selectedAIProvider.provider]);
+
   // Computed all STT providers
   const allSttProviders: TYPE_PROVIDER[] = [
     ...SPEECH_TO_TEXT_PROVIDERS,
@@ -558,6 +570,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     hasActiveLicense,
     setHasActiveLicense,
     getActiveLicenseStatus,
+    supportsImages,
     selectedAudioDevices,
     setSelectedAudioDevices,
     setCursorType,
