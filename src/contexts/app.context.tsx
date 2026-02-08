@@ -398,7 +398,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         e.key === STORAGE_KEYS.SELECTED_STT_PROVIDER ||
         e.key === STORAGE_KEYS.SYSTEM_PROMPT ||
         e.key === STORAGE_KEYS.SCREENSHOT_CONFIG ||
-        e.key === STORAGE_KEYS.CUSTOMIZABLE
+        e.key === STORAGE_KEYS.CUSTOMIZABLE ||
+        e.key === STORAGE_KEYS.STT_LANGUAGE
       ) {
         loadData();
       }

@@ -2,7 +2,7 @@
 import { UseCompletionReturn } from "@/types";
 import { useMicVAD } from "@ricky0123/vad-react";
 import { LoaderCircleIcon, MicIcon, MicOffIcon } from "lucide-react";
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components";
 import { useApp } from "@/contexts";
 import { floatArrayToWav } from "@/lib/utils";
@@ -25,6 +25,12 @@ const AutoSpeechVADInternal = ({
   const { selectedSttProvider, allSttProviders, sttLanguage } = useApp();
   const lastTranscriptionRef = useRef<string>("");
   const lastTranscriptionTimeRef = useRef<number>(0);
+  const sttLanguageRef = useRef(sttLanguage);
+
+  // Update ref whenever sttLanguage changes
+  useEffect(() => {
+    sttLanguageRef.current = sttLanguage;
+  }, [sttLanguage]);
 
   const audioConstraints: MediaTrackConstraints = microphoneDeviceId
     ? { deviceId: { exact: microphoneDeviceId } }
@@ -85,7 +91,7 @@ const AutoSpeechVADInternal = ({
           provider: useTalkEchoAPI ? undefined : providerConfig,
           selectedProvider: selectedSttProvider,
           audio: audioBlob,
-          language: sttLanguage,
+          language: sttLanguageRef.current,
         });
 
         if (transcription) {

@@ -204,13 +204,13 @@ export async function fetchSTT(params: STTParams): Promise<string> {
     }
 
     const allVariables = {
-      LANGUAGE: finalLanguage,
       ...Object.fromEntries(
         Object.entries(selectedProvider.variables).map(([key, value]) => [
           key.toUpperCase(),
           value,
         ])
       ),
+      LANGUAGE: finalLanguage,
     };
 
     // Prepare request
