@@ -24,6 +24,8 @@ export interface UseSettingsReturn {
     provider: string;
     variables: Record<string, string>;
   }) => void;
+  sttLanguage: string;
+  onSetSttLanguage: (language: string) => void;
   handleDeleteAllChatsConfirm: () => void;
   showDeleteConfirmDialog: boolean;
   setShowDeleteConfirmDialog: React.Dispatch<React.SetStateAction<boolean>>;

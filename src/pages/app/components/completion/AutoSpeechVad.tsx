@@ -22,7 +22,7 @@ const AutoSpeechVADInternal = ({
   microphoneDeviceId,
 }: AutoSpeechVADProps) => {
   const [isTranscribing, setIsTranscribing] = useState(false);
-  const { selectedSttProvider, allSttProviders } = useApp();
+  const { selectedSttProvider, allSttProviders, sttLanguage } = useApp();
   const lastTranscriptionRef = useRef<string>("");
   const lastTranscriptionTimeRef = useRef<number>(0);
 
@@ -85,6 +85,7 @@ const AutoSpeechVADInternal = ({
           provider: useTalkEchoAPI ? undefined : providerConfig,
           selectedProvider: selectedSttProvider,
           audio: audioBlob,
+          language: sttLanguage,
         });
 
         if (transcription) {
