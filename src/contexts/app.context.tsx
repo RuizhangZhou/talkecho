@@ -110,6 +110,10 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     variables: {},
   });
 
+  const [sttLanguage, setSttLanguage] = useState<string>(
+    safeLocalStorage.getItem(STORAGE_KEYS.STT_LANGUAGE) || "en"
+  );
+
   const [screenshotConfiguration, setScreenshotConfiguration] =
     useState<ScreenshotConfig>({
       mode: "manual",
@@ -215,6 +219,12 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     );
     if (savedSelectedStt) {
       setSelectedSttProvider(JSON.parse(savedSelectedStt));
+    }
+
+    // Load STT language
+    const savedSttLanguage = safeLocalStorage.getItem(STORAGE_KEYS.STT_LANGUAGE);
+    if (savedSttLanguage) {
+      setSttLanguage(savedSttLanguage);
     }
 
     // Load customizable state
@@ -417,6 +427,13 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     }
   }, [selectedSttProvider, isDataLoaded]);
 
+  // Sync STT language to localStorage
+  useEffect(() => {
+    if (isDataLoaded) {
+      safeLocalStorage.setItem(STORAGE_KEYS.STT_LANGUAGE, sttLanguage);
+    }
+  }, [sttLanguage, isDataLoaded]);
+
   // Sync selected audio devices to localStorage (only after initial load)
   useEffect(() => {
     if (isDataLoaded) {
@@ -558,6 +575,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     customSttProviders,
     selectedSttProvider,
     onSetSelectedSttProvider,
+    sttLanguage,
+    onSetSttLanguage: setSttLanguage,
     screenshotConfiguration,
     setScreenshotConfiguration,
     customizable,

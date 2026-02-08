@@ -188,6 +188,7 @@ export function useAudioOverlay() {
   const {
     selectedSttProvider,
     allSttProviders,
+    sttLanguage,
     selectedAIProvider,
     allAiProviders,
     systemPrompt,
@@ -563,6 +564,7 @@ export function useAudioOverlay() {
               provider: providerConfig,
               selectedProvider: selectedSttProvider,
               audio: audioBlob,
+              language: sttLanguage,
             });
 
             const timeoutPromise = new Promise<string>((_, reject) => {
@@ -791,6 +793,7 @@ export function useAudioOverlay() {
           provider: providerConfig,
           selectedProvider: selectedSttProvider,
           audio: audioBlob,
+          language: sttLanguage,
         });
 
         if (!transcription.trim()) {
