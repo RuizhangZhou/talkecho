@@ -178,6 +178,7 @@ pub async fn transcribe_audio(
     let client = reqwest::Client::new();
     let error_provider = provider.clone();
     let error_model = model.clone();
+
     match perform_user_audio_transcription(
         &client,
         &user_audio_config.url,

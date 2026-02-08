@@ -625,6 +625,7 @@ export function useAudioOverlay() {
     capturing,
     selectedSttProvider,
     allSttProviders,
+    sttLanguage,
     conversation.messages.length,
     includeMicrophone,
   ]);
@@ -875,6 +876,7 @@ export function useAudioOverlay() {
     [
       selectedSttProvider,
       allSttProviders,
+      sttLanguage,
       selectedAIProvider,
       allAiProviders,
       systemPrompt,
