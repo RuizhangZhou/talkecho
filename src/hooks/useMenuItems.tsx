@@ -88,7 +88,7 @@ export const useMenuItems = () => {
     {
       icon: BugIcon,
       label: "Report a bug",
-      href: "https://github.com/ruizhangzhou/talkecho/issues/new?template=bug-report.yml",
+      href: "https://github.com/RuizhangZhou/talkecho/issues",
     },
     {
       icon: PowerIcon,
@@ -132,4 +132,3 @@ export const useMenuItems = () => {
     footerLinks,
   };
 };
-
