@@ -17,6 +17,8 @@ export const useSettings = () => {
     selectedSttProvider,
     onSetSelectedAIProvider,
     onSetSelectedSttProvider,
+    sttLanguage,
+    onSetSttLanguage,
     hasActiveLicense,
   } = useApp();
   const [variables, setVariables] = useState<{ key: string; value: string }[]>(
@@ -106,6 +108,8 @@ export const useSettings = () => {
     selectedSttProvider,
     onSetSelectedAIProvider,
     onSetSelectedSttProvider,
+    sttLanguage,
+    onSetSttLanguage,
     handleDeleteAllChatsConfirm,
     showDeleteConfirmDialog,
     setShowDeleteConfirmDialog,

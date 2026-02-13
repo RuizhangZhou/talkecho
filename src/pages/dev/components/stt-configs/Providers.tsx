@@ -8,10 +8,21 @@ export const Providers = ({
   allSttProviders,
   selectedSttProvider,
   onSetSelectedSttProvider,
+  sttLanguage,
+  onSetSttLanguage,
   sttVariables,
 }: UseSettingsReturn) => {
   const [localSelectedProvider, setLocalSelectedProvider] =
     useState<ResultJSON | null>(null);
+
+  const LANGUAGES = [
+    { label: "🇺🇸 English", value: "en" },
+    { label: "🇩🇪 German", value: "de" },
+    { label: "🇨🇳 Chinese", value: "zh" },
+    { label: "🇯🇵 Japanese", value: "ja" },
+    { label: "🇷🇺 Russian", value: "ru" },
+    { label: "🇰🇷 Korean", value: "ko" },
+  ];
 
   useEffect(() => {
     if (selectedSttProvider?.provider) {
@@ -67,6 +78,20 @@ export const Providers = ({
           }}
         />
       </div>
+
+      <div className="space-y-2">
+        <Header
+          title="STT Language"
+          description="Select the language for speech recognition. This helps improve accuracy for non-English speakers."
+        />
+        <Selection
+          selected={sttLanguage}
+          options={LANGUAGES}
+          placeholder="Select language"
+          onChange={(value) => onSetSttLanguage(value)}
+        />
+      </div>
+
       {localSelectedProvider ? (
         <Header
           title={`Method: ${
@@ -174,7 +199,9 @@ export const Providers = ({
       <div className="space-y-4 mt-2">
         {sttVariables
           ?.filter(
-            (variable) => variable?.key !== findKeyAndValue("api_key")?.key
+            (variable) => 
+              variable?.key !== findKeyAndValue("api_key")?.key &&
+              variable?.key?.toUpperCase() !== "LANGUAGE"
           )
           .map((variable) => {
             const getVariableValue = () => {
