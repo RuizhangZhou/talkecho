@@ -162,6 +162,7 @@ pub struct UserAudioConfig {
 pub async fn transcribe_audio(
     app: AppHandle,
     audio_base64: String,
+    language: Option<String>,
 ) -> Result<AudioResponse, String> {
     let (_, _, selected_model) = get_stored_credentials(&app).await?;
     let provider = selected_model.as_ref().map(|model| model.provider.clone());
@@ -177,6 +178,7 @@ pub async fn transcribe_audio(
     let client = reqwest::Client::new();
     let error_provider = provider.clone();
     let error_model = model.clone();
+
     match perform_user_audio_transcription(
         &client,
         &user_audio_config.url,
@@ -184,6 +186,7 @@ pub async fn transcribe_audio(
         &user_audio_config.model,
         user_audio_config.headers.as_ref(),
         &audio_bytes,
+        language.as_deref(),
     )
     .await
     {
@@ -209,6 +212,7 @@ pub async fn transcribe_audio(
                     fallback_model,
                     user_audio_config.headers.as_ref(),
                     &audio_bytes,
+                    language.as_deref(),
                 )
                 .await
                 {
@@ -367,6 +371,7 @@ async fn perform_user_audio_transcription(
     model: &str,
     headers: Option<&Vec<UserAudioHeader>>,
     audio_bytes: &[u8],
+    language: Option<&str>,
 ) -> Result<String, String> {
     let audio_part = Part::bytes(audio_bytes.to_vec())
         .file_name("audio.wav")
@@ -376,6 +381,10 @@ async fn perform_user_audio_transcription(
     let mut form = Form::new()
         .part("file", audio_part)
         .text("model", model.to_string());
+
+    if let Some(lang) = language {
+        form = form.text("language", lang.to_string());
+    }
 
     if let Some(extra_headers) = headers {
         for header in extra_headers {
