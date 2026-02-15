@@ -1,6 +1,6 @@
 [package]
 name = "talkecho"
-version = "0.1.5"
+version = "0.1.7"
 description = "TalkEcho - invisible real-time meeting captions & translation (forked from Pluely)."
 authors = ["Ruizhang Zhou <ruizhang.zhou@mail.com>"]
 license = "GPL-3.0"

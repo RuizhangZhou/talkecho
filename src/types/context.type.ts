@@ -31,6 +31,8 @@ export type IContextType = {
     provider: string;
     variables: Record<string, string>;
   }) => void;
+  sttLanguage: string;
+  onSetSttLanguage: (language: string) => void;
   screenshotConfiguration: ScreenshotConfig;
   setScreenshotConfiguration: Dispatch<SetStateAction<ScreenshotConfig>>;
   customizable: CustomizableState;
