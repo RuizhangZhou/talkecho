@@ -11,7 +11,7 @@ import curl2Json from "@bany/curl-to-json";
 import { shouldUseTalkEchoAPI } from "./talkecho.api";
 
 // TalkEcho STT function
-async function fetchTalkEchoSTT(audio: File | Blob): Promise<string> {
+async function fetchTalkEchoSTT(audio: File | Blob, language?: string): Promise<string> {
   try {
     // Convert audio to base64
     const audioBase64 = await blobToBase64(audio);
@@ -23,6 +23,7 @@ async function fetchTalkEchoSTT(audio: File | Blob): Promise<string> {
       error?: string;
     }>("transcribe_audio", {
       audioBase64,
+      language: language || "en",
     });
 
     if (response.success && response.transcription) {
@@ -51,6 +52,7 @@ export interface STTParams {
     variables: Record<string, string>;
   };
   audio: File | Blob;
+  language?: string;
 }
 
 /**
@@ -135,7 +137,7 @@ export async function fetchSTT(params: STTParams): Promise<string> {
   let warnings: string[] = [];
 
   try {
-    const { provider, selectedProvider, audio } = params;
+    const { provider, selectedProvider, audio, language } = params;
 
     // Validate audio quality first
     const validation = await validateAudioQuality(audio);
@@ -147,7 +149,7 @@ export async function fetchSTT(params: STTParams): Promise<string> {
     // Check if we should use TalkEcho API instead
     const useTalkEchoAPI = await shouldUseTalkEchoAPI();
     if (useTalkEchoAPI) {
-      return await fetchTalkEchoSTT(audio);
+      return await fetchTalkEchoSTT(audio, language);
     }
 
     if (!provider) throw new Error("Provider not provided");
@@ -175,6 +177,32 @@ export async function fetchSTT(params: STTParams): Promise<string> {
     // }
 
     // Build variable map
+    let finalLanguage = language || "en";
+    
+    // Some providers prefer xx-XX format (like Google, Azure or Deepgram)
+    const providerId = provider.id?.toLowerCase() || "";
+    if (
+      providerId === "google-stt" ||
+      providerId === "azure-stt" ||
+      providerId === "deepgram-stt"
+    ) {
+      const mapping: Record<string, string> = {
+        en: "en-US",
+        ru: "ru-RU",
+        de: "de-DE",
+        fr: "fr-FR",
+        es: "es-ES",
+        it: "it-IT",
+        zh: "zh-CN",
+        ja: "ja-JP",
+        pt: "pt-PT",
+        ko: "ko-KR",
+      };
+      if (mapping[finalLanguage]) {
+        finalLanguage = mapping[finalLanguage];
+      }
+    }
+
     const allVariables = {
       ...Object.fromEntries(
         Object.entries(selectedProvider.variables).map(([key, value]) => [
@@ -182,6 +210,7 @@ export async function fetchSTT(params: STTParams): Promise<string> {
           value,
         ])
       ),
+      LANGUAGE: finalLanguage,
     };
 
     // Prepare request

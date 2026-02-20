@@ -16,7 +16,7 @@ export const AudioRecorder = ({
   onTranscriptionComplete,
   onCancel,
 }: AudioRecorderProps) => {
-  const { selectedSttProvider, allSttProviders } = useApp();
+  const { selectedSttProvider, allSttProviders, sttLanguage } = useApp();
   const [audioStream, setAudioStream] = useState<MediaStream | null>(null);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [duration, setDuration] = useState(0);
@@ -116,6 +116,7 @@ export const AudioRecorder = ({
         provider: useTalkEchoAPI ? undefined : provider,
         selectedProvider: selectedSttProvider,
         audio: audioBlob,
+        language: sttLanguage,
       });
 
       onTranscriptionComplete(text);
