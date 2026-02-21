@@ -292,7 +292,9 @@ export async function* fetchAIResponse(params: {
       }
     }
 
-    const fetchFunction = url?.includes("http") ? fetch : tauriFetch;
+    // Always use tauriFetch to avoid CORS issues, except for localhost during development
+    const isLocalhost = url?.includes("localhost") || url?.includes("127.0.0.1");
+    const fetchFunction = isLocalhost ? fetch : tauriFetch;
 
     let response;
     try {
