@@ -925,33 +925,17 @@ export function useAudioOverlay() {
           return;
         }
 
-        // Auto-detect: only "manual" input needs history, all STT-triggered sources are stateless
-        const useHistory = source === "manual";
-
-        // Limit history tokens for manual Q&A to avoid context overflow
-        // Simple estimation: 1 token ≈ 4 characters, limit to ~4000 tokens = 16000 chars
-        const MAX_HISTORY_CHARS = 16000;
-        let filteredHistory: CompletionMessage[] = [];
-
-        if (useHistory && previousMessages.length > 0) {
-          let totalChars = 0;
-          // Take messages from most recent (reversed order already) until we hit the limit
-          for (const msg of previousMessages) {
-            const msgChars = msg.content.length;
-            if (totalChars + msgChars > MAX_HISTORY_CHARS) {
-              break;
-            }
-            filteredHistory.push(msg);
-            totalChars += msgChars;
-          }
-        }
+        // Auto-detect: only "manual" input needs history, all STT-triggered sources are stateless.
+        // For "instant ask" (manual input), include the full conversation history.
+        const history: CompletionMessage[] =
+          source === "manual" ? previousMessages : [];
 
         try {
           for await (const chunk of fetchAIResponse({
             provider: useTalkEchoAPI ? undefined : provider,
             selectedProvider: selectedAIProvider,
             systemPrompt: prompt,
-            history: useHistory ? filteredHistory : [],  // Stateless for STT, with limited history for manual Q&A
+            history,
             userMessage: transcription,
             imagesBase64: [],
           })) {
