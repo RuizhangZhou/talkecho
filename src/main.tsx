@@ -3,11 +3,24 @@ import ReactDOM from "react-dom/client";
 import Overlay from "./components/Overlay";
 import { AppProvider, ThemeProvider } from "./contexts";
 import "./global.css";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import AppRoutes from "./routes";
+import { isTauri } from "./lib/platform/detection";
 
-const currentWindow = getCurrentWindow();
-const windowLabel = currentWindow.label;
+// Check if running in Tauri
+const isInTauri = isTauri();
+
+let windowLabel = "dashboard";
+if (isInTauri) {
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
+  const currentWindow = getCurrentWindow();
+  windowLabel = currentWindow.label;
+} else {
+  // Web mode: detect from hash or default to mobile if on mobile device
+  const isMobileDevice = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+  if (isMobileDevice && !window.location.hash) {
+    window.location.hash = "#/mobile";
+  }
+}
 
 const ensureDashboardInitialRoute = () => {
   if (windowLabel !== "dashboard") {
