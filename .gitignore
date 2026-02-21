@@ -32,3 +32,6 @@ IDENTITY.md
 SOUL.md
 TOOLS.md
 USER.md
+
+# OpenClaw automation runtime locks (do not commit)
+talkecho-autodev.lock*
