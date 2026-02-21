@@ -1,10 +1,8 @@
 ﻿# TalkEcho
 
-_Invisible real-time meeting subtitles & translation assistant — with all features enabled by default (forked from [Pluely](https://github.com/iamsrikanthnani/pluely))._
+_Invisible real-time meeting subtitles & translation assistant (forked from [Pluely](https://github.com/iamsrikanthnani/pluely))._
 
 TalkEcho runs as a translucent desktop overlay that captures both system audio and microphone input, streams them to the speech-to-text / LLM providers you choose, and returns bilingual captions without tipping anyone off.
-
-**No membership / paywall:** this fork keeps the “small Pro features” enabled out of the box. Just bring your own API keys and run it locally.
 
 ---
 
