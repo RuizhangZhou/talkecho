@@ -29,7 +29,7 @@ export const PageLayout = ({
         />
       </header>
 
-      <ScrollArea className="h-[calc(100vh-5rem)] pr-6">
+      <ScrollArea className="h-[calc(100vh-5rem)] pr-6" scrollbars="both">
         <div className="flex flex-col gap-6 pb-12 pt-4 px-1">
           <Promote />
           {children}
