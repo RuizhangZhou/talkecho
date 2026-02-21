@@ -3,13 +3,10 @@ import ReactDOM from "react-dom/client";
 import Overlay from "./components/Overlay";
 import { AppProvider, ThemeProvider } from "./contexts";
 import "./global.css";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import AppRoutes from "./routes";
+import { isTauri } from "./lib/tauri";
 
-const currentWindow = getCurrentWindow();
-const windowLabel = currentWindow.label;
-
-const ensureDashboardInitialRoute = () => {
+const ensureDashboardInitialRoute = (windowLabel: string) => {
   if (windowLabel !== "dashboard") {
     return;
   }
@@ -38,18 +35,37 @@ const ensureDashboardInitialRoute = () => {
   }
 };
 
-ensureDashboardInitialRoute();
+const bootstrap = async () => {
+  let windowLabel = "web";
 
-// Render different components based on window label
-if (windowLabel.startsWith("capture-overlay-")) {
-  const monitorIndex = parseInt(windowLabel.split("-")[2], 10) || 0;
-  // Render overlay without providers
-  ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-    <React.StrictMode>
-      <Overlay monitorIndex={monitorIndex} />
-    </React.StrictMode>
-  );
-} else {
+  if (isTauri()) {
+    try {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      windowLabel = getCurrentWindow().label;
+    } catch (error) {
+      console.warn("Failed to detect Tauri window label, falling back to web:", error);
+    }
+  } else {
+    // Web mode: default to the mobile experience.
+    if (!window.location.hash) {
+      window.location.hash = "#/mobile";
+    }
+  }
+
+  ensureDashboardInitialRoute(windowLabel);
+
+  // Render different components based on window label
+  if (windowLabel.startsWith("capture-overlay-")) {
+    const monitorIndex = parseInt(windowLabel.split("-")[2], 10) || 0;
+    // Render overlay without providers
+    ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+      <React.StrictMode>
+        <Overlay monitorIndex={monitorIndex} />
+      </React.StrictMode>
+    );
+    return;
+  }
+
   ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <React.StrictMode>
       <ThemeProvider>
@@ -59,4 +75,6 @@ if (windowLabel.startsWith("capture-overlay-")) {
       </ThemeProvider>
     </React.StrictMode>
   );
-}
+};
+
+bootstrap();

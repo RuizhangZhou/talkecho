@@ -23,6 +23,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { enable, disable } from "@tauri-apps/plugin-autostart";
+import { isTauri } from "@/lib/tauri";
 import {
   ReactNode,
   createContext,
@@ -361,6 +362,10 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   // Listen for app icon hide/show events when window is toggled
   useEffect(() => {
+    if (!isTauri()) {
+      return;
+    }
+
     const handleAppIconVisibility = async (isVisible: boolean) => {
       try {
         await invoke("set_app_icon_visibility", { visible: isVisible });
@@ -369,22 +374,30 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       }
     };
 
-    const unlistenHide = listen("handle-app-icon-on-hide", async () => {
-      const currentState = getCustomizableState();
-      // Only hide app icon if user has set it to hide mode
-      if (!currentState.appIcon.isVisible) {
-        await handleAppIconVisibility(false);
-      }
-    });
+    let unlistenHide: Promise<() => void> | null = null;
+    let unlistenShow: Promise<() => void> | null = null;
 
-    const unlistenShow = listen("handle-app-icon-on-show", async () => {
-      // Always show app icon when window is shown, regardless of user setting
-      await handleAppIconVisibility(true);
-    });
+    try {
+      unlistenHide = listen("handle-app-icon-on-hide", async () => {
+        const currentState = getCustomizableState();
+        // Only hide app icon if user has set it to hide mode
+        if (!currentState.appIcon.isVisible) {
+          await handleAppIconVisibility(false);
+        }
+      });
+
+      unlistenShow = listen("handle-app-icon-on-show", async () => {
+        // Always show app icon when window is shown, regardless of user setting
+        await handleAppIconVisibility(true);
+      });
+    } catch (error) {
+      console.debug("Skipping Tauri event listeners:", error);
+      return;
+    }
 
     return () => {
-      unlistenHide.then((fn) => fn());
-      unlistenShow.then((fn) => fn());
+      unlistenHide?.then((fn) => fn());
+      unlistenShow?.then((fn) => fn());
     };
   }, []);
 
@@ -609,7 +622,6 @@ export const useApp = () => {
 
   return context;
 };
-
 
 
 
