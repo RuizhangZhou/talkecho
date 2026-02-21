@@ -203,7 +203,7 @@ export async function fetchSTT(params: STTParams): Promise<string> {
       }
     }
 
-    const allVariables: Record<string, string> = {
+    const allVariables = {
       ...Object.fromEntries(
         Object.entries(selectedProvider.variables).map(([key, value]) => [
           key.toUpperCase(),
