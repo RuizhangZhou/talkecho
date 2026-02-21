@@ -14,6 +14,7 @@ import curl2Json from "@bany/curl-to-json";
 import { shouldUseTalkEchoAPI } from "./talkecho.api";
 import { CHUNK_POLL_INTERVAL_MS } from "../chat-constants";
 import { getResponseSettings, RESPONSE_LENGTHS, LANGUAGES } from "@/lib";
+import { isTauri } from "../tauri";
 
 function buildEnhancedSystemPrompt(baseSystemPrompt?: string): string {
   const responseSettings = getResponseSettings();
@@ -292,9 +293,10 @@ export async function* fetchAIResponse(params: {
       }
     }
 
-    // Always use tauriFetch to avoid CORS issues, except for localhost during development
+    // Prefer native fetch in web mode; use tauriFetch in Tauri to avoid CORS issues.
     const isLocalhost = url?.includes("localhost") || url?.includes("127.0.0.1");
-    const fetchFunction = isLocalhost ? fetch : tauriFetch;
+    const shouldUseNativeFetch = isLocalhost || !isTauri();
+    const fetchFunction = shouldUseNativeFetch ? fetch : tauriFetch;
 
     let response;
     try {
@@ -417,5 +419,4 @@ export async function* fetchAIResponse(params: {
     );
   }
 }
-
 
