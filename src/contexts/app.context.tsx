@@ -66,6 +66,55 @@ const validateAndProcessCurlProviders = (
   }
 };
 
+type ProviderVariables = Record<string, string>;
+type ProviderVariablesById = Record<string, ProviderVariables>;
+
+const parseProviderVariablesById = (raw: string | null): ProviderVariablesById => {
+  if (!raw) return {};
+
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {};
+    }
+
+    const result: ProviderVariablesById = {};
+    for (const [providerId, variables] of Object.entries(
+      parsed as Record<string, unknown>
+    )) {
+      if (!providerId || typeof providerId !== "string") continue;
+      if (!variables || typeof variables !== "object" || Array.isArray(variables))
+        continue;
+
+      const cleanVariables: ProviderVariables = {};
+      for (const [key, value] of Object.entries(
+        variables as Record<string, unknown>
+      )) {
+        if (!key || typeof key !== "string") continue;
+        if (typeof value === "string") {
+          cleanVariables[key] = value;
+        }
+      }
+      result[providerId] = cleanVariables;
+    }
+
+    return result;
+  } catch {
+    return {};
+  }
+};
+
+const getProviderVariablesById = (storageKey: string): ProviderVariablesById => {
+  return parseProviderVariablesById(safeLocalStorage.getItem(storageKey));
+};
+
+const setProviderVariablesById = (
+  storageKey: string,
+  variablesById: ProviderVariablesById
+) => {
+  safeLocalStorage.setItem(storageKey, JSON.stringify(variablesById));
+};
+
 // Create the context
 const AppContext = createContext<IContextType | undefined>(undefined);
 
@@ -488,11 +537,29 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       return;
     }
 
-    setSelectedAIProvider((prev) => ({
-      ...prev,
-      provider,
-      variables,
-    }));
+    const isSwitching = provider !== selectedAIProvider.provider;
+    const variablesByIdKey = STORAGE_KEYS.AI_PROVIDER_VARIABLES_BY_ID;
+
+    let variablesById = getProviderVariablesById(variablesByIdKey);
+
+    // Save current provider variables before switching
+    if (isSwitching && selectedAIProvider.provider) {
+      variablesById[selectedAIProvider.provider] = selectedAIProvider.variables;
+    }
+
+    const shouldRestore =
+      isSwitching && Object.keys(variables || {}).length === 0;
+    const nextVariables: Record<string, string> = shouldRestore
+      ? variablesById[provider] || {}
+      : variables;
+
+    // Persist the latest variables for the selected provider
+    if (provider) {
+      variablesById[provider] = nextVariables;
+      setProviderVariablesById(variablesByIdKey, variablesById);
+    }
+
+    setSelectedAIProvider((prev) => ({ ...prev, provider, variables: nextVariables }));
   };
 
   // Setter for selected STT with validation
@@ -508,7 +575,29 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       return;
     }
 
-    setSelectedSttProvider((prev) => ({ ...prev, provider, variables }));
+    const isSwitching = provider !== selectedSttProvider.provider;
+    const variablesByIdKey = STORAGE_KEYS.STT_PROVIDER_VARIABLES_BY_ID;
+
+    let variablesById = getProviderVariablesById(variablesByIdKey);
+
+    // Save current provider variables before switching
+    if (isSwitching && selectedSttProvider.provider) {
+      variablesById[selectedSttProvider.provider] = selectedSttProvider.variables;
+    }
+
+    const shouldRestore =
+      isSwitching && Object.keys(variables || {}).length === 0;
+    const nextVariables: Record<string, string> = shouldRestore
+      ? variablesById[provider] || {}
+      : variables;
+
+    // Persist the latest variables for the selected provider
+    if (provider) {
+      variablesById[provider] = nextVariables;
+      setProviderVariablesById(variablesByIdKey, variablesById);
+    }
+
+    setSelectedSttProvider((prev) => ({ ...prev, provider, variables: nextVariables }));
   };
 
   // Toggle handlers

@@ -27,6 +27,7 @@ export const CreateEditProvider = ({
     showForm,
     setShowForm,
     editingProvider,
+    setEditingProvider,
     formData,
     setFormData,
     errors,
@@ -35,13 +36,25 @@ export const CreateEditProvider = ({
     handleAutoFill,
   } = hookInstance;
 
+  const resetForm = () => {
+    setEditingProvider(null);
+    setFormData({
+      id: "",
+      streaming: false,
+      responseContentPath: "",
+      isCustom: true,
+      curl: "",
+    });
+    setErrors({});
+  };
+
   return (
     <>
       {!showForm ? (
         <Button
           onClick={() => {
+            resetForm();
             setShowForm(true);
-            setErrors({});
           }}
           variant="outline"
           className="w-full h-11 border-1 border-input/50 focus:border-primary/50 transition-colors"
@@ -216,7 +229,10 @@ export const CreateEditProvider = ({
           <div className="flex justify-end gap-2 -mt-3">
             <Button
               variant="outline"
-              onClick={() => setShowForm(!showForm)}
+              onClick={() => {
+                resetForm();
+                setShowForm(false);
+              }}
               className="h-11 border-1 border-input/50 focus:border-primary/50 transition-colors"
             >
               Cancel
