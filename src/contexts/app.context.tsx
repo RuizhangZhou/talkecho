@@ -66,6 +66,75 @@ const validateAndProcessCurlProviders = (
   }
 };
 
+type ProviderVariables = Record<string, string>;
+type ProviderVariablesById = Record<string, ProviderVariables>;
+
+const isPrototypePollutionKey = (key: string) => {
+  return key === "__proto__" || key === "constructor" || key === "prototype";
+};
+
+const createNullProtoObject = <T extends Record<string, any>>() => {
+  return Object.create(null) as T;
+};
+
+const sanitizeProviderVariables = (variables: unknown): ProviderVariables => {
+  if (!variables || typeof variables !== "object" || Array.isArray(variables)) {
+    return createNullProtoObject<ProviderVariables>();
+  }
+
+  const clean = createNullProtoObject<ProviderVariables>();
+  for (const [key, value] of Object.entries(variables as Record<string, unknown>)) {
+    if (!key || typeof key !== "string" || isPrototypePollutionKey(key)) continue;
+    if (typeof value === "string") {
+      clean[key] = value;
+    }
+  }
+  return clean;
+};
+
+const sanitizeProviderVariablesById = (input: unknown): ProviderVariablesById => {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return createNullProtoObject<ProviderVariablesById>();
+  }
+
+  const result = createNullProtoObject<ProviderVariablesById>();
+  for (const [providerId, variables] of Object.entries(
+    input as Record<string, unknown>
+  )) {
+    if (!providerId || typeof providerId !== "string") continue;
+    if (isPrototypePollutionKey(providerId)) continue;
+
+    result[providerId] = sanitizeProviderVariables(variables);
+  }
+
+  return result;
+};
+
+const parseProviderVariablesById = (raw: string | null): ProviderVariablesById => {
+  if (!raw) return createNullProtoObject<ProviderVariablesById>();
+
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return sanitizeProviderVariablesById(parsed);
+  } catch {
+    return createNullProtoObject<ProviderVariablesById>();
+  }
+};
+
+const getProviderVariablesById = (storageKey: string): ProviderVariablesById => {
+  return parseProviderVariablesById(safeLocalStorage.getItem(storageKey));
+};
+
+const setProviderVariablesById = (
+  storageKey: string,
+  variablesById: ProviderVariablesById
+) => {
+  safeLocalStorage.setItem(
+    storageKey,
+    JSON.stringify(sanitizeProviderVariablesById(variablesById))
+  );
+};
+
 // Create the context
 const AppContext = createContext<IContextType | undefined>(undefined);
 
@@ -488,11 +557,29 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       return;
     }
 
-    setSelectedAIProvider((prev) => ({
-      ...prev,
-      provider,
-      variables,
-    }));
+    const isSwitching = provider !== selectedAIProvider.provider;
+    const variablesByIdKey = STORAGE_KEYS.AI_PROVIDER_VARIABLES_BY_ID;
+
+    let variablesById = getProviderVariablesById(variablesByIdKey);
+
+    // Save current provider variables before switching
+    if (isSwitching && selectedAIProvider.provider) {
+      variablesById[selectedAIProvider.provider] = selectedAIProvider.variables;
+    }
+
+    const shouldRestore =
+      isSwitching && Object.keys(variables || {}).length === 0;
+    const nextVariables = sanitizeProviderVariables(
+      shouldRestore ? variablesById[provider] : variables
+    );
+
+    // Persist the latest variables for the selected provider
+    if (provider) {
+      variablesById[provider] = nextVariables;
+      setProviderVariablesById(variablesByIdKey, variablesById);
+    }
+
+    setSelectedAIProvider((prev) => ({ ...prev, provider, variables: nextVariables }));
   };
 
   // Setter for selected STT with validation
@@ -508,7 +595,29 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       return;
     }
 
-    setSelectedSttProvider((prev) => ({ ...prev, provider, variables }));
+    const isSwitching = provider !== selectedSttProvider.provider;
+    const variablesByIdKey = STORAGE_KEYS.STT_PROVIDER_VARIABLES_BY_ID;
+
+    let variablesById = getProviderVariablesById(variablesByIdKey);
+
+    // Save current provider variables before switching
+    if (isSwitching && selectedSttProvider.provider) {
+      variablesById[selectedSttProvider.provider] = selectedSttProvider.variables;
+    }
+
+    const shouldRestore =
+      isSwitching && Object.keys(variables || {}).length === 0;
+    const nextVariables = sanitizeProviderVariables(
+      shouldRestore ? variablesById[provider] : variables
+    );
+
+    // Persist the latest variables for the selected provider
+    if (provider) {
+      variablesById[provider] = nextVariables;
+      setProviderVariablesById(variablesByIdKey, variablesById);
+    }
+
+    setSelectedSttProvider((prev) => ({ ...prev, provider, variables: nextVariables }));
   };
 
   // Toggle handlers
