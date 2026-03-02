@@ -69,38 +69,55 @@ const validateAndProcessCurlProviders = (
 type ProviderVariables = Record<string, string>;
 type ProviderVariablesById = Record<string, ProviderVariables>;
 
+const isPrototypePollutionKey = (key: string) => {
+  return key === "__proto__" || key === "constructor" || key === "prototype";
+};
+
+const createNullProtoObject = <T extends Record<string, any>>() => {
+  return Object.create(null) as T;
+};
+
+const sanitizeProviderVariables = (variables: unknown): ProviderVariables => {
+  if (!variables || typeof variables !== "object" || Array.isArray(variables)) {
+    return createNullProtoObject<ProviderVariables>();
+  }
+
+  const clean = createNullProtoObject<ProviderVariables>();
+  for (const [key, value] of Object.entries(variables as Record<string, unknown>)) {
+    if (!key || typeof key !== "string" || isPrototypePollutionKey(key)) continue;
+    if (typeof value === "string") {
+      clean[key] = value;
+    }
+  }
+  return clean;
+};
+
+const sanitizeProviderVariablesById = (input: unknown): ProviderVariablesById => {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return createNullProtoObject<ProviderVariablesById>();
+  }
+
+  const result = createNullProtoObject<ProviderVariablesById>();
+  for (const [providerId, variables] of Object.entries(
+    input as Record<string, unknown>
+  )) {
+    if (!providerId || typeof providerId !== "string") continue;
+    if (isPrototypePollutionKey(providerId)) continue;
+
+    result[providerId] = sanitizeProviderVariables(variables);
+  }
+
+  return result;
+};
+
 const parseProviderVariablesById = (raw: string | null): ProviderVariablesById => {
-  if (!raw) return {};
+  if (!raw) return createNullProtoObject<ProviderVariablesById>();
 
   try {
     const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return {};
-    }
-
-    const result: ProviderVariablesById = {};
-    for (const [providerId, variables] of Object.entries(
-      parsed as Record<string, unknown>
-    )) {
-      if (!providerId || typeof providerId !== "string") continue;
-      if (!variables || typeof variables !== "object" || Array.isArray(variables))
-        continue;
-
-      const cleanVariables: ProviderVariables = {};
-      for (const [key, value] of Object.entries(
-        variables as Record<string, unknown>
-      )) {
-        if (!key || typeof key !== "string") continue;
-        if (typeof value === "string") {
-          cleanVariables[key] = value;
-        }
-      }
-      result[providerId] = cleanVariables;
-    }
-
-    return result;
+    return sanitizeProviderVariablesById(parsed);
   } catch {
-    return {};
+    return createNullProtoObject<ProviderVariablesById>();
   }
 };
 
@@ -112,7 +129,10 @@ const setProviderVariablesById = (
   storageKey: string,
   variablesById: ProviderVariablesById
 ) => {
-  safeLocalStorage.setItem(storageKey, JSON.stringify(variablesById));
+  safeLocalStorage.setItem(
+    storageKey,
+    JSON.stringify(sanitizeProviderVariablesById(variablesById))
+  );
 };
 
 // Create the context
@@ -549,9 +569,9 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
     const shouldRestore =
       isSwitching && Object.keys(variables || {}).length === 0;
-    const nextVariables: Record<string, string> = shouldRestore
-      ? variablesById[provider] || {}
-      : variables;
+    const nextVariables = sanitizeProviderVariables(
+      shouldRestore ? variablesById[provider] : variables
+    );
 
     // Persist the latest variables for the selected provider
     if (provider) {
@@ -587,9 +607,9 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
     const shouldRestore =
       isSwitching && Object.keys(variables || {}).length === 0;
-    const nextVariables: Record<string, string> = shouldRestore
-      ? variablesById[provider] || {}
-      : variables;
+    const nextVariables = sanitizeProviderVariables(
+      shouldRestore ? variablesById[provider] : variables
+    );
 
     // Persist the latest variables for the selected provider
     if (provider) {
