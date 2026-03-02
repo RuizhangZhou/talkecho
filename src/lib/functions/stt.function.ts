@@ -9,6 +9,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { TYPE_PROVIDER } from "@/types";
 import curl2Json from "@bany/curl-to-json";
 import { shouldUseTalkEchoAPI } from "./talkecho.api";
+import { isTauri } from "../tauri";
 
 // TalkEcho STT function
 async function fetchTalkEchoSTT(audio: File | Blob, language?: string): Promise<string> {
@@ -304,7 +305,9 @@ export async function fetchSTT(params: STTParams): Promise<string> {
       body = JSON.stringify(deepVariableReplacer(dataObj, allVariables));
     }
 
-    const fetchFunction = url?.includes("http") ? fetch : tauriFetch;
+    const isLocalhost = url?.includes("localhost") || url?.includes("127.0.0.1");
+    const shouldUseNativeFetch = isLocalhost || !isTauri();
+    const fetchFunction = shouldUseNativeFetch ? fetch : tauriFetch;
 
     // Send request
     let response: Response;
@@ -363,5 +366,4 @@ export async function fetchSTT(params: STTParams): Promise<string> {
     throw new Error(msg);
   }
 }
-
 
