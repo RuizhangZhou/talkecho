@@ -34,7 +34,7 @@ export function useCustomSttProviders() {
       ...provider,
     });
     setEditingProvider(providerId);
-    setShowForm(true);
+    setShowForm(!showForm);
     setErrors({});
   };
 
