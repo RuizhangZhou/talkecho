@@ -34,7 +34,7 @@ export function useCustomAiProviders() {
       ...provider,
     });
     setEditingProvider(providerId);
-    setShowForm(true);
+    setShowForm(!showForm);
     setErrors({});
   };
 

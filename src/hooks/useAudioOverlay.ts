@@ -925,17 +925,28 @@ export function useAudioOverlay() {
           return;
         }
 
-        // Auto-detect: only "manual" input needs history, all STT-triggered sources are stateless.
-        // For "instant ask" (manual input), include the full conversation history.
-        const history: CompletionMessage[] =
-          source === "manual" ? previousMessages : [];
+        // Auto-detect: only "manual" input needs history, all STT-triggered sources are stateless
+        const useHistory = source === "manual";
+
+        // Limit history to ~4000 tokens (16000 chars) to avoid context overflow
+        const MAX_HISTORY_CHARS = 16000;
+        let filteredHistory: CompletionMessage[] = [];
+
+        if (useHistory && previousMessages.length > 0) {
+          let totalChars = 0;
+          for (const msg of previousMessages) {
+            if (totalChars + msg.content.length > MAX_HISTORY_CHARS) break;
+            filteredHistory.push(msg);
+            totalChars += msg.content.length;
+          }
+        }
 
         try {
           for await (const chunk of fetchAIResponse({
             provider: useTalkEchoAPI ? undefined : provider,
             selectedProvider: selectedAIProvider,
             systemPrompt: prompt,
-            history,
+            history: useHistory ? filteredHistory : [],
             userMessage: transcription,
             imagesBase64: [],
           })) {
