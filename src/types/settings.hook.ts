@@ -26,6 +26,8 @@ export interface UseSettingsReturn {
   }) => void;
   sttLanguage: string;
   onSetSttLanguage: (language: string) => void;
+  dictationSttLanguage: string;
+  onSetDictationSttLanguage: (language: string) => void;
   handleDeleteAllChatsConfirm: () => void;
   showDeleteConfirmDialog: boolean;
   setShowDeleteConfirmDialog: React.Dispatch<React.SetStateAction<boolean>>;

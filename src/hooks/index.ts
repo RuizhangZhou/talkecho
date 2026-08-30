@@ -8,6 +8,7 @@ export * from "./useSettings";
 export * from "./useGlobalShortcuts";
 export * from "./useShortcuts";
 export * from "./useAudioOverlay";
+export * from "./useDictation";
 export * from "./useHistory";
 export * from "./useCopyToClipboard";
 export * from "./useTitles";

@@ -19,6 +19,8 @@ export const useSettings = () => {
     onSetSelectedSttProvider,
     sttLanguage,
     onSetSttLanguage,
+    dictationSttLanguage,
+    onSetDictationSttLanguage,
     hasActiveLicense,
   } = useApp();
   const [variables, setVariables] = useState<{ key: string; value: string }[]>(
@@ -110,6 +112,8 @@ export const useSettings = () => {
     onSetSelectedSttProvider,
     sttLanguage,
     onSetSttLanguage,
+    dictationSttLanguage,
+    onSetDictationSttLanguage,
     handleDeleteAllChatsConfirm,
     showDeleteConfirmDialog,
     setShowDeleteConfirmDialog,

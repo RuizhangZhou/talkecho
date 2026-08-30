@@ -40,6 +40,7 @@ export interface VadConfig {
 const DISPLAY_SAMPLE_RATE = 44100;
 const MIC_VAD_SAMPLE_RATE = 16000;
 const MIC_VAD_FRAME_SAMPLES = 512;
+const MIC_VAD_FRAME_MS = (MIC_VAD_FRAME_SAMPLES / MIC_VAD_SAMPLE_RATE) * 1000;
 // Higher = stricter detection of user speech for microphone VAD
 const DEFAULT_USER_SPEAKING_THRESHOLD = 0.85;
 
@@ -48,8 +49,8 @@ const DEFAULT_USER_SPEAKING_THRESHOLD = 0.85;
 const MIC_VAD_TUNING = {
   positiveSpeechThreshold: 0.85,
   negativeSpeechThreshold: 0.5,
-  minSpeechFrames: 7,
-  preSpeechPadFrames: 1,
+  minSpeechMs: 7 * MIC_VAD_FRAME_MS,
+  preSpeechPadMs: MIC_VAD_FRAME_MS,
 } as const;
 
 
@@ -195,7 +196,10 @@ export function useAudioOverlay() {
     selectedAudioDevices,
   } = useApp();
   const abortControllerRef = useRef<AbortController | null>(null);
-  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const aiQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const aiQueueGenerationRef = useRef(0);
+  const lastSpeechEventRef = useRef({ fingerprint: "", receivedAt: 0 });
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isSavingRef = useRef<boolean>(false);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
@@ -231,20 +235,19 @@ export function useAudioOverlay() {
     return (vadConfig.silence_chunks * vadConfig.hop_size) / DISPLAY_SAMPLE_RATE;
   }, [vadConfig.silence_chunks, vadConfig.hop_size]);
 
-  const microphoneRedemptionFrames = useMemo(() => {
-    const frameDuration = MIC_VAD_FRAME_SAMPLES / MIC_VAD_SAMPLE_RATE;
-    return Math.max(1, Math.round(microphoneSilenceSeconds / frameDuration));
+  const microphoneRedemptionMs = useMemo(() => {
+    return Math.max(MIC_VAD_FRAME_MS, microphoneSilenceSeconds * 1000);
   }, [microphoneSilenceSeconds]);
 
-  const microphoneRedemptionFramesRef = useRef(microphoneRedemptionFrames);
+  const microphoneRedemptionMsRef = useRef(microphoneRedemptionMs);
   useEffect(() => {
-    microphoneRedemptionFramesRef.current = microphoneRedemptionFrames;
+    microphoneRedemptionMsRef.current = microphoneRedemptionMs;
     if (micVadInstanceRef.current) {
       micVadInstanceRef.current.setOptions({
-        redemptionFrames: microphoneRedemptionFrames,
+        redemptionMs: microphoneRedemptionMs,
       });
     }
-  }, [microphoneRedemptionFrames]);
+  }, [microphoneRedemptionMs]);
 
   useEffect(() => {
     let canceled = false;
@@ -254,12 +257,15 @@ export function useAudioOverlay() {
     const initializeMicVAD = async () => {
       try {
         const vad = await MicVAD.new({
-          additionalAudioConstraints: audioConstraints,
-          frameSamples: MIC_VAD_FRAME_SAMPLES,
+          model: "v5",
+          getStream: () =>
+            navigator.mediaDevices.getUserMedia({ audio: audioConstraints }),
+          resumeStream: () =>
+            navigator.mediaDevices.getUserMedia({ audio: audioConstraints }),
           positiveSpeechThreshold: MIC_VAD_TUNING.positiveSpeechThreshold,
           negativeSpeechThreshold: MIC_VAD_TUNING.negativeSpeechThreshold,
-          minSpeechFrames: MIC_VAD_TUNING.minSpeechFrames,
-          preSpeechPadFrames: MIC_VAD_TUNING.preSpeechPadFrames,
+          minSpeechMs: MIC_VAD_TUNING.minSpeechMs,
+          preSpeechPadMs: MIC_VAD_TUNING.preSpeechPadMs,
           onFrameProcessed: (probabilities) => {
             setMicVadUserSpeaking(
               probabilities.isSpeech > DEFAULT_USER_SPEAKING_THRESHOLD
@@ -282,7 +288,7 @@ export function useAudioOverlay() {
         }
 
         micVadInstanceRef.current = vad;
-        vad.setOptions({ redemptionFrames: microphoneRedemptionFramesRef.current });
+        vad.setOptions({ redemptionMs: microphoneRedemptionMsRef.current });
         setMicVadLoading(false);
 
         if (includeMicRef.current && capturingRef.current) {
@@ -524,15 +530,29 @@ export function useAudioOverlay() {
 
   // Handle single speech detection event (both VAD and continuous modes)
   useEffect(() => {
+    let disposed = false;
     let speechUnlisten: (() => void) | undefined;
 
     const setupEventListener = async () => {
       try {
-        speechUnlisten = await listen("speech-detected", async (event) => {
+        const unlisten = await listen("speech-detected", async (event) => {
           try {
             if (!capturing) return;
 
             const base64Audio = event.payload as string;
+            const fingerprint = `${base64Audio.length}:${base64Audio.slice(
+              0,
+              64
+            )}:${base64Audio.slice(-64)}`;
+            const receivedAt = Date.now();
+            if (
+              lastSpeechEventRef.current.fingerprint === fingerprint &&
+              receivedAt - lastSpeechEventRef.current.receivedAt < 10_000
+            ) {
+              console.warn("Skipping duplicate speech-detected event");
+              return;
+            }
+            lastSpeechEventRef.current = { fingerprint, receivedAt };
 
             // Convert to blob (system audio only, microphone handled separately)
             const binaryString = atob(base64Audio);
@@ -588,13 +608,11 @@ export function useAudioOverlay() {
                   ? systemPrompt || DEFAULT_SYSTEM_PROMPT
                   : contextContent || DEFAULT_SYSTEM_PROMPT;
 
-                const previousMessages = buildConversationHistory();
-
                 // Real-time STT: auto-triggered, stateless (no history needed)
                 await processWithAI(
                   transcription,
                   effectiveSystemPrompt,
-                  previousMessages,
+                  [],
                   "system_audio"  // Auto-detect: STT source = no history
                 );
               } else {
@@ -611,6 +629,15 @@ export function useAudioOverlay() {
             setIsProcessing(false);
           }
         });
+
+        // `listen` registers asynchronously. If this effect was cleaned up
+        // while registration was in flight, immediately remove the listener
+        // instead of leaking it for the lifetime of the app.
+        if (disposed) {
+          unlisten();
+          return;
+        }
+        speechUnlisten = unlisten;
       } catch (err) {
         setError("Failed to setup speech listener");
       }
@@ -619,6 +646,7 @@ export function useAudioOverlay() {
     setupEventListener();
 
     return () => {
+      disposed = true;
       if (speechUnlisten) speechUnlisten();
     };
   }, [
@@ -626,8 +654,6 @@ export function useAudioOverlay() {
     selectedSttProvider,
     allSttProviders,
     sttLanguage,
-    conversation.messages.length,
-    includeMicrophone,
   ]);
 
   // Context management functions
@@ -891,18 +917,15 @@ export function useAudioOverlay() {
   }, [processMicrophoneAudio]);
 
   // AI Processing function
-  const processWithAI = useCallback(
+  const runAIRequest = useCallback(
     async (
       transcription: string,
       prompt: string,
       previousMessages: CompletionMessage[],
       source: ChatMessage["source"] = "system_audio"
     ) => {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-      }
-
-      abortControllerRef.current = new AbortController();
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
 
       try {
         setIsAIProcessing(true);
@@ -938,15 +961,18 @@ export function useAudioOverlay() {
             history,
             userMessage: transcription,
             imagesBase64: [],
+            signal: controller.signal,
           })) {
             fullResponse += chunk;
             setLastAIResponse((prev) => prev + chunk);
           }
         } catch (aiError: any) {
-          setError(aiError.message || "Failed to get AI response");
+          if (!controller.signal.aborted) {
+            setError(aiError.message || "Failed to get AI response");
+          }
         }
 
-        if (fullResponse) {
+        if (!controller.signal.aborted && fullResponse) {
           const timestamp = Date.now();
           setConversation((prev) => ({
             ...prev,
@@ -974,11 +1000,38 @@ export function useAudioOverlay() {
       } catch (err) {
         setError("Failed to get AI response");
       } finally {
+        if (abortControllerRef.current === controller) {
+          abortControllerRef.current = null;
+        }
         setIsAIProcessing(false);
         // No auto-restart - user manually controls when to start next recording
       }
     },
-    [selectedAIProvider, allAiProviders, conversation.messages]
+    [selectedAIProvider, allAiProviders]
+  );
+
+  // Speech segments can arrive faster than an LLM responds. Preserve every
+  // segment and process them in order instead of cancelling the previous one
+  // or allowing responses to race into the same UI state.
+  const processWithAI = useCallback(
+    (
+      transcription: string,
+      prompt: string,
+      previousMessages: CompletionMessage[],
+      source: ChatMessage["source"] = "system_audio"
+    ) => {
+      const generation = aiQueueGenerationRef.current;
+      const queuedRequest = aiQueueRef.current.then(async () => {
+        if (generation !== aiQueueGenerationRef.current) return;
+        await runAIRequest(transcription, prompt, previousMessages, source);
+      });
+
+      // Keep the queue usable after a failed request; the caller still receives
+      // the original rejection through `queuedRequest`.
+      aiQueueRef.current = queuedRequest.catch(() => {});
+      return queuedRequest;
+    },
+    [runAIRequest]
   );
 
   const sendManualPrompt = useCallback(
@@ -1056,7 +1109,8 @@ export function useAudioOverlay() {
 
   const stopCapture = useCallback(async () => {
     try {
-      // Abort any ongoing AI requests
+      // Abort the active request and invalidate requests waiting in the queue.
+      aiQueueGenerationRef.current += 1;
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
         abortControllerRef.current = null;
@@ -1190,6 +1244,7 @@ export function useAudioOverlay() {
 
   useEffect(() => {
     return () => {
+      aiQueueGenerationRef.current += 1;
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }

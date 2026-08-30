@@ -3,6 +3,7 @@ mod activate;
 mod api;
 mod capture;
 mod db;
+mod dictation;
 mod shortcuts;
 mod window;
 use std::sync::{Arc, Mutex};
@@ -114,6 +115,10 @@ pub fn run() {
             speaker::get_audio_sample_rate,
             speaker::get_input_devices,
             speaker::get_output_devices,
+            dictation::inject_text,
+            dictation::show_dictation_window,
+            dictation::hide_dictation_window,
+            dictation::dictation_debug_log,
         ])
         .setup(|app| {
             // Setup main window positioning
@@ -127,6 +132,10 @@ pub fn run() {
                     eprintln!("Failed to create dashboard window on startup: {}", e);
                 }
             }
+
+            // Right Ctrl toggles dictation mode (Windows only for now)
+            dictation::init_window(&app_handle);
+            dictation::start_hotkey_listener(&app_handle);
 
             #[cfg(desktop)]
             {

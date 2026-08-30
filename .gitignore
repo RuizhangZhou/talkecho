@@ -12,6 +12,11 @@ dist
 dist-ssr
 *.local
 
+# Rust/Tauri build artifacts (also in src-tauri/.gitignore, repeated here
+# so all git GUIs honour the rule without reading nested .gitignore files)
+src-tauri/target/
+src-tauri/gen/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

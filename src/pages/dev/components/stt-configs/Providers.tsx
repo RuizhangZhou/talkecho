@@ -10,6 +10,8 @@ export const Providers = ({
   onSetSelectedSttProvider,
   sttLanguage,
   onSetSttLanguage,
+  dictationSttLanguage,
+  onSetDictationSttLanguage,
   sttVariables,
 }: UseSettingsReturn) => {
   const [localSelectedProvider, setLocalSelectedProvider] =
@@ -22,6 +24,10 @@ export const Providers = ({
     { label: "🇯🇵 Japanese", value: "ja" },
     { label: "🇷🇺 Russian", value: "ru" },
     { label: "🇰🇷 Korean", value: "ko" },
+  ];
+  const DICTATION_LANGUAGES = [
+    { label: "✨ Auto detect", value: "auto" },
+    ...LANGUAGES,
   ];
 
   useEffect(() => {
@@ -81,14 +87,27 @@ export const Providers = ({
 
       <div className="space-y-2">
         <Header
-          title="STT Language"
-          description="Select the language for speech recognition. This helps improve accuracy for non-English speakers."
+          title="Meeting STT Language"
+          description="Language hint for meeting captions and translation. Choose the meeting's main language for the best stability on short audio segments."
         />
         <Selection
           selected={sttLanguage}
           options={LANGUAGES}
           placeholder="Select language"
           onChange={(value) => onSetSttLanguage(value)}
+        />
+      </div>
+
+      <div className="space-y-2">
+        <Header
+          title="Dictation STT Language"
+          description="Used only by Right Ctrl dictation. Auto detect is recommended for multilingual speech; your provider must support omitting the language hint."
+        />
+        <Selection
+          selected={dictationSttLanguage}
+          options={DICTATION_LANGUAGES}
+          placeholder="Select dictation language"
+          onChange={(value) => onSetDictationSttLanguage(value)}
         />
       </div>
 

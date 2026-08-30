@@ -25,6 +25,7 @@ export const STORAGE_KEYS = {
   RESPONSE_SETTINGS: "response_settings",
   SUPPORTS_IMAGES: "supports_images",
   STT_LANGUAGE: "stt_language",
+  DICTATION_STT_LANGUAGE: "dictation_stt_language",
 } as const;
 
 // Max number of files that can be attached to a message

@@ -2,7 +2,7 @@
 import { UseCompletionReturn } from "@/types";
 import { useMicVAD } from "@ricky0123/vad-react";
 import { LoaderCircleIcon, MicIcon, MicOffIcon } from "lucide-react";
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Button } from "@/components";
 import { useApp } from "@/contexts";
 import { floatArrayToWav } from "@/lib/utils";
@@ -36,15 +36,21 @@ const AutoSpeechVADInternal = ({
     ? { deviceId: { exact: microphoneDeviceId } }
     : { deviceId: "default" };
 
+  const getMicrophoneStream = useCallback(
+    () => navigator.mediaDevices.getUserMedia({ audio: audioConstraints }),
+    [microphoneDeviceId]
+  );
+
   const vad = useMicVAD({
+    model: "v5",
     userSpeakingThreshold: 0.85,
     positiveSpeechThreshold: 0.85,
     negativeSpeechThreshold: 0.5,
-    minSpeechFrames: 7,
-    preSpeechPadFrames: 1,
-    frameSamples: 512,
+    minSpeechMs: 224,
+    preSpeechPadMs: 32,
     startOnLoad: true,
-    additionalAudioConstraints: audioConstraints,
+    getStream: getMicrophoneStream,
+    resumeStream: getMicrophoneStream,
     onSpeechEnd: async (audio) => {
       // Prevent concurrent transcription requests
       if (isTranscribing) {

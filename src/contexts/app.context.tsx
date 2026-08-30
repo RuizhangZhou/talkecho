@@ -182,6 +182,9 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const [sttLanguage, setSttLanguage] = useState<string>(
     safeLocalStorage.getItem(STORAGE_KEYS.STT_LANGUAGE) || "en"
   );
+  const [dictationSttLanguage, setDictationSttLanguage] = useState<string>(
+    safeLocalStorage.getItem(STORAGE_KEYS.DICTATION_STT_LANGUAGE) || "auto"
+  );
 
   const [screenshotConfiguration, setScreenshotConfiguration] =
     useState<ScreenshotConfig>({
@@ -294,6 +297,13 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     const savedSttLanguage = safeLocalStorage.getItem(STORAGE_KEYS.STT_LANGUAGE);
     if (savedSttLanguage) {
       setSttLanguage(savedSttLanguage);
+    }
+
+    const savedDictationSttLanguage = safeLocalStorage.getItem(
+      STORAGE_KEYS.DICTATION_STT_LANGUAGE
+    );
+    if (savedDictationSttLanguage) {
+      setDictationSttLanguage(savedDictationSttLanguage);
     }
 
     // Load customizable state
@@ -468,7 +478,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         e.key === STORAGE_KEYS.SYSTEM_PROMPT ||
         e.key === STORAGE_KEYS.SCREENSHOT_CONFIG ||
         e.key === STORAGE_KEYS.CUSTOMIZABLE ||
-        e.key === STORAGE_KEYS.STT_LANGUAGE
+        e.key === STORAGE_KEYS.STT_LANGUAGE ||
+        e.key === STORAGE_KEYS.DICTATION_STT_LANGUAGE
       ) {
         loadData();
       }
@@ -503,6 +514,15 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       safeLocalStorage.setItem(STORAGE_KEYS.STT_LANGUAGE, sttLanguage);
     }
   }, [sttLanguage, isDataLoaded]);
+
+  useEffect(() => {
+    if (isDataLoaded) {
+      safeLocalStorage.setItem(
+        STORAGE_KEYS.DICTATION_STT_LANGUAGE,
+        dictationSttLanguage
+      );
+    }
+  }, [dictationSttLanguage, isDataLoaded]);
 
   // Sync selected audio devices to localStorage (only after initial load)
   useEffect(() => {
@@ -687,6 +707,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     onSetSelectedSttProvider,
     sttLanguage,
     onSetSttLanguage: setSttLanguage,
+    dictationSttLanguage,
+    onSetDictationSttLanguage: setDictationSttLanguage,
     screenshotConfiguration,
     setScreenshotConfiguration,
     customizable,

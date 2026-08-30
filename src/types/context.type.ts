@@ -33,6 +33,8 @@ export type IContextType = {
   }) => void;
   sttLanguage: string;
   onSetSttLanguage: (language: string) => void;
+  dictationSttLanguage: string;
+  onSetDictationSttLanguage: (language: string) => void;
   screenshotConfiguration: ScreenshotConfig;
   setScreenshotConfiguration: Dispatch<SetStateAction<ScreenshotConfig>>;
   customizable: CustomizableState;

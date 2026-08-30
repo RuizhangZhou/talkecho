@@ -1,4 +1,4 @@
-import { CursorSelection, ShortcutManager } from "./components";
+import { CursorSelection, DictationInfo, ShortcutManager } from "./components";
 import { PageLayout } from "@/layouts";
 
 const Shortcuts = () => {
@@ -13,6 +13,9 @@ const Shortcuts = () => {
 
         {/* Keyboard Shortcuts */}
         <ShortcutManager />
+
+        {/* Dictation (Right Ctrl to talk) */}
+        <DictationInfo />
       </div>
     </PageLayout>
   );

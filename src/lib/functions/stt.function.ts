@@ -23,7 +23,7 @@ async function fetchTalkEchoSTT(audio: File | Blob, language?: string): Promise<
       error?: string;
     }>("transcribe_audio", {
       audioBase64,
-      language: language || "en",
+      language: language && language !== "auto" ? language : null,
     });
 
     if (response.success && response.transcription) {
@@ -53,6 +53,7 @@ export interface STTParams {
   };
   audio: File | Blob;
   language?: string;
+  onDebug?: (message: string) => void;
 }
 
 /**
@@ -117,13 +118,10 @@ function isLikelyHallucination(text: string): boolean {
   }
 
   // Additional heuristics
-  // Too short (single character after trimming)
-  if (trimmed.length < 2) {
-    return true;
-  }
-
-  // Only punctuation
-  if (/^[^\w\s]+$/.test(trimmed)) {
+  // Only punctuation/symbols. Use Unicode properties because JavaScript's
+  // `\w` is ASCII-only and would classify valid Chinese/Japanese/etc. text
+  // as punctuation.
+  if (/^[^\p{L}\p{N}\s]+$/u.test(trimmed)) {
     return true;
   }
 
@@ -137,12 +135,13 @@ export async function fetchSTT(params: STTParams): Promise<string> {
   let warnings: string[] = [];
 
   try {
-    const { provider, selectedProvider, audio, language } = params;
+    const { provider, selectedProvider, audio, language, onDebug } = params;
 
     // Validate audio quality first
     const validation = await validateAudioQuality(audio);
     if (!validation.valid) {
       console.log(`🚫 Audio validation failed: ${validation.reason}`);
+      onDebug?.(`STT audio rejected: ${validation.reason}`);
       return ""; // Return empty string for invalid audio
     }
 
@@ -177,7 +176,9 @@ export async function fetchSTT(params: STTParams): Promise<string> {
     // }
 
     // Build variable map
-    let finalLanguage = language || "en";
+    // "auto" means the provider should infer the language. For multipart
+    // providers the empty replacement causes the language field to be omitted.
+    let finalLanguage = language === "auto" ? "" : language || "en";
     
     // Some providers prefer xx-XX format (like Google, Azure or Deepgram)
     const providerId = provider.id?.toLowerCase() || "";
@@ -233,7 +234,12 @@ export async function fetchSTT(params: STTParams): Promise<string> {
     const replacedParams = deepVariableReplacer(decodedParams, allVariables);
 
     // Add query parameters to URL
-    const queryString = new URLSearchParams(replacedParams).toString();
+    const nonEmptyParams = Object.fromEntries(
+      Object.entries(replacedParams).filter(
+        ([, value]) => value !== "" && value !== null && value !== undefined
+      )
+    ) as Record<string, string>;
+    const queryString = new URLSearchParams(nonEmptyParams).toString();
     if (queryString) {
       url += (url.includes("?") ? "&" : "?") + queryString;
     }
@@ -334,6 +340,9 @@ export async function fetchSTT(params: STTParams): Promise<string> {
     }
 
     const responseText = await response.text();
+    onDebug?.(
+      `STT response received: status=${response.status} bytes=${responseText.length}`
+    );
     let data: any;
     try {
       data = JSON.parse(responseText);
@@ -353,6 +362,7 @@ export async function fetchSTT(params: STTParams): Promise<string> {
     // Check for hallucinations
     if (isLikelyHallucination(transcription)) {
       console.log(`🚫 Filtered hallucination: "${transcription}"`);
+      onDebug?.(`STT filtered possible hallucination: "${transcription}"`);
       return ""; // Return empty string to indicate no valid speech
     }
 
