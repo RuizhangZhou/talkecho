@@ -43,6 +43,8 @@ export const CreateEditProvider = ({
       streaming: false,
       responseContentPath: "",
       isCustom: true,
+      contextWindowTokens: 16000,
+      maxOutputTokens: 1024,
       curl: "",
     });
     setErrors({});
@@ -238,6 +240,34 @@ export const CreateEditProvider = ({
                   streaming: checked,
                 }))
               }
+            />
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <TextInput
+              label="Context Window Tokens"
+              placeholder="16000"
+              value={String(formData.contextWindowTokens ?? "")}
+              onChange={(value) =>
+                setFormData((prev) => ({
+                  ...prev,
+                  contextWindowTokens: value ? Number(value) : undefined,
+                }))
+              }
+              error={errors.contextWindowTokens}
+              notes="Used to budget input history. Set this to the selected model's context window."
+            />
+            <TextInput
+              label="Output Token Reserve"
+              placeholder="1024"
+              value={String(formData.maxOutputTokens ?? "")}
+              onChange={(value) =>
+                setFormData((prev) => ({
+                  ...prev,
+                  maxOutputTokens: value ? Number(value) : undefined,
+                }))
+              }
+              error={errors.maxOutputTokens}
+              notes="Reserved for the response so history cannot consume the full context window."
             />
           </div>
           {/* Response Configuration */}

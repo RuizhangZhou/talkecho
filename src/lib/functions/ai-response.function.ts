@@ -14,6 +14,49 @@ import curl2Json from "@bany/curl-to-json";
 import { shouldUseTalkEchoAPI } from "./talkecho.api";
 import { CHUNK_POLL_INTERVAL_MS } from "../chat-constants";
 import { getResponseSettings, RESPONSE_LENGTHS, LANGUAGES } from "@/lib";
+import {
+  classifyHttpFailure,
+  createLinkedAbortContext,
+  delayWithSignal,
+  normalizeRequestFailure,
+  RequestFailure,
+} from "./request-resilience";
+
+const DEFAULT_AI_TIMEOUT_MS = 90_000;
+const DEFAULT_STREAM_INACTIVITY_TIMEOUT_MS = 30_000;
+const DEFAULT_AI_MAX_RETRIES = 1;
+
+async function readStreamWithTimeout(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  timeoutMs: number,
+  signal: AbortSignal
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  if (signal.aborted) {
+    throw new DOMException("Request aborted", "AbortError");
+  }
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      reader.read(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          void reader.cancel("Stream inactivity timeout");
+          reject(
+            new RequestFailure(
+              `The provider stream produced no data for ${Math.round(
+                timeoutMs / 1000
+              )} seconds.`,
+              { kind: "timeout", retryable: true }
+            )
+          );
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 function buildEnhancedSystemPrompt(baseSystemPrompt?: string): string {
   const responseSettings = getResponseSettings();
@@ -52,113 +95,110 @@ async function* fetchTalkEchoAIResponse(params: {
   history?: Message[];
   signal?: AbortSignal;
 }): AsyncIterable<string> {
+  const {
+    systemPrompt,
+    userMessage,
+    imagesBase64 = [],
+    history = [],
+    signal,
+  } = params;
+
+  if (signal?.aborted) return;
+
+  let historyString: string | undefined;
+  if (history.length > 0) {
+    // Callers pass history in chronological order; preserve that order.
+    const formattedHistory = history.map((msg) => ({
+      role: msg.role,
+      content: [{ type: "text", text: msg.content }],
+    }));
+    historyString = JSON.stringify(formattedHistory);
+  }
+
+  let imageBase64: unknown = undefined;
+  if (imagesBase64.length > 0) {
+    imageBase64 = imagesBase64.length === 1 ? imagesBase64[0] : imagesBase64;
+  }
+
+  const requestId =
+    globalThis.crypto?.randomUUID?.() ??
+    `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  let streamComplete = false;
+  const streamChunks: string[] = [];
+  let unlisten: (() => void) | undefined;
+  let unlistenComplete: (() => void) | undefined;
+  let rejectOnAbort: (() => void) | undefined;
+
+  const onAbort = () => {
+    void invoke("cancel_chat_stream", { requestId }).catch(() => {});
+  };
+  signal?.addEventListener("abort", onAbort, { once: true });
+
   try {
-    const {
-      systemPrompt,
+    if (signal?.aborted) return;
+
+    unlisten = await listen<{ requestId: string; chunk: string }>(
+      "chat_stream_chunk",
+      (event) => {
+        if (event.payload.requestId === requestId) {
+          streamChunks.push(event.payload.chunk);
+        }
+      }
+    );
+    unlistenComplete = await listen<{ requestId: string }>(
+      "chat_stream_complete",
+      (event) => {
+        if (event.payload.requestId === requestId) streamComplete = true;
+      }
+    );
+    if (signal?.aborted) return;
+
+    const invokePromise = invoke("chat_stream_response", {
       userMessage,
-      imagesBase64 = [],
-      history = [],
-      signal,
-    } = params;
-
-    // Check if already aborted before starting
-    if (signal?.aborted) {
-      return;
-    }
-
-    // Convert history to the expected format
-    let historyString: string | undefined;
-    if (history.length > 0) {
-      // Create a copy before reversing to avoid mutating the original array
-      const formattedHistory = [...history].reverse().map((msg) => ({
-        role: msg.role,
-        content: [{ type: "text", text: msg.content }],
-      }));
-      historyString = JSON.stringify(formattedHistory);
-    }
-
-    // Handle images - can be string or array
-    let imageBase64: any = undefined;
-    if (imagesBase64.length > 0) {
-      imageBase64 = imagesBase64.length === 1 ? imagesBase64[0] : imagesBase64;
-    }
-
-    // Set up streaming event listener
-    let streamComplete = false;
-    const streamChunks: string[] = [];
-
-    const unlisten = await listen("chat_stream_chunk", (event) => {
-      const chunk = event.payload as string;
-      streamChunks.push(chunk);
+      systemPrompt,
+      imageBase64,
+      history: historyString,
+      requestId,
     });
+    // Prevent a later Rust-side cancellation rejection from becoming unhandled
+    // if the abort branch wins this race.
+    void invokePromise.catch(() => {});
 
-    const unlistenComplete = await listen("chat_stream_complete", () => {
-      streamComplete = true;
-    });
-
-    try {
-      // Check if aborted before starting invoke
+    const abortPromise = new Promise<never>((_, reject) => {
       if (signal?.aborted) {
-        unlisten();
-        unlistenComplete();
+        reject(new DOMException("Request aborted", "AbortError"));
         return;
       }
+      rejectOnAbort = () =>
+        reject(new DOMException("Request aborted", "AbortError"));
+      signal?.addEventListener("abort", rejectOnAbort, { once: true });
+    });
+    await Promise.race([invokePromise, abortPromise]);
 
-      // Start the streaming request using the new API response endpoint
-      await invoke("chat_stream_response", {
-        userMessage,
-        systemPrompt,
-        imageBase64,
-        history: historyString,
-      });
+    let lastIndex = 0;
+    while (!streamComplete) {
+      if (signal?.aborted) return;
 
-      // Yield chunks as they come in
-      let lastIndex = 0;
-      while (!streamComplete) {
-        // Check if aborted during streaming
-        if (signal?.aborted) {
-          unlisten();
-          unlistenComplete();
-          return;
-        }
+      await new Promise((resolve) => setTimeout(resolve, CHUNK_POLL_INTERVAL_MS));
 
-        // Wait a bit for chunks to accumulate
-        await new Promise((resolve) =>
-          setTimeout(resolve, CHUNK_POLL_INTERVAL_MS)
-        );
+      if (signal?.aborted) return;
 
-        // Check again after timeout
-        if (signal?.aborted) {
-          unlisten();
-          unlistenComplete();
-          return;
-        }
-
-        // Yield any new chunks
-        for (let i = lastIndex; i < streamChunks.length; i++) {
-          yield streamChunks[i];
-        }
-        lastIndex = streamChunks.length;
-      }
-
-      // Final abort check before yielding remaining chunks
-      if (signal?.aborted) {
-        unlisten();
-        unlistenComplete();
-        return;
-      }
-
-      // Yield any remaining chunks
       for (let i = lastIndex; i < streamChunks.length; i++) {
         yield streamChunks[i];
       }
-    } finally {
-      unlisten();
-      unlistenComplete();
+      lastIndex = streamChunks.length;
     }
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    yield `TalkEcho API Error: ${errorMessage}`;
+
+    if (signal?.aborted) return;
+
+    for (let i = lastIndex; i < streamChunks.length; i++) {
+      yield streamChunks[i];
+    }
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
+    if (rejectOnAbort) signal?.removeEventListener("abort", rejectOnAbort);
+    unlisten?.();
+    unlistenComplete?.();
   }
 }
 
@@ -173,6 +213,10 @@ export async function* fetchAIResponse(params: {
   userMessage: string;
   imagesBase64?: string[];
   signal?: AbortSignal;
+  timeoutMs?: number;
+  inactivityTimeoutMs?: number;
+  maxRetries?: number;
+  onRetry?: (attempt: number, reason: string) => void;
 }): AsyncIterable<string> {
   try {
     const {
@@ -183,6 +227,10 @@ export async function* fetchAIResponse(params: {
       userMessage,
       imagesBase64 = [],
       signal,
+      timeoutMs = DEFAULT_AI_TIMEOUT_MS,
+      inactivityTimeoutMs = DEFAULT_STREAM_INACTIVITY_TIMEOUT_MS,
+      maxRetries = DEFAULT_AI_MAX_RETRIES,
+      onRetry,
     } = params;
 
     // Check if already aborted
@@ -195,13 +243,23 @@ export async function* fetchAIResponse(params: {
     // Check if we should use TalkEcho API instead
     const useTalkEchoAPI = await shouldUseTalkEchoAPI();
     if (useTalkEchoAPI) {
-      yield* fetchTalkEchoAIResponse({
-        systemPrompt: enhancedSystemPrompt,
-        userMessage,
-        imagesBase64,
-        history,
-        signal,
-      });
+      const abortContext = createLinkedAbortContext(signal, timeoutMs);
+      try {
+        yield* fetchTalkEchoAIResponse({
+          systemPrompt: enhancedSystemPrompt,
+          userMessage,
+          imagesBase64,
+          history,
+          signal: abortContext.signal,
+        });
+      } catch (error) {
+        throw normalizeRequestFailure(error, {
+          timedOut: abortContext.didTimeout(),
+          cancelled: signal?.aborted,
+        });
+      } finally {
+        abortContext.cleanup();
+      }
       return;
     }
     if (!provider) {
@@ -296,125 +354,124 @@ export async function* fetchAIResponse(params: {
     const isLocalhost = url?.includes("localhost") || url?.includes("127.0.0.1");
     const fetchFunction = isLocalhost ? fetch : tauriFetch;
 
-    let response;
-    try {
-      response = await fetchFunction(url, {
-        method: curlJson.method || "POST",
-        headers,
-        body: curlJson.method === "GET" ? undefined : JSON.stringify(bodyObj),
-        signal,
-      });
-    } catch (fetchError) {
-      // Check if aborted
-      if (
-        signal?.aborted ||
-        (fetchError instanceof Error && fetchError.name === "AbortError")
-      ) {
-        return; // Silently return on abort
-      }
-      yield `Network error during API request: ${
-        fetchError instanceof Error ? fetchError.message : "Unknown error"
-      }`;
-      return;
-    }
-
-    if (!response.ok) {
-      let errorText = "";
+    for (let attempt = 0; ; attempt += 1) {
+      const abortContext = createLinkedAbortContext(signal, timeoutMs);
+      let emittedContent = false;
       try {
-        errorText = await response.text();
-      } catch {}
-      yield `API request failed: ${response.status} ${response.statusText}${
-        errorText ? ` - ${errorText}` : ""
-      }`;
-      return;
-    }
+        const response = await fetchFunction(url, {
+          method: curlJson.method || "POST",
+          headers,
+          body: curlJson.method === "GET" ? undefined : JSON.stringify(bodyObj),
+          signal: abortContext.signal,
+        });
 
-    if (!provider?.streaming) {
-      let json;
-      try {
-        json = await response.json();
-      } catch (parseError) {
-        yield `Failed to parse non-streaming response: ${
-          parseError instanceof Error ? parseError.message : "Unknown error"
-        }`;
-        return;
-      }
-      const content =
-        getByPath(json, provider?.responseContentPath || "") || "";
-      yield content;
-      return;
-    }
-
-    if (!response.body) {
-      yield "Streaming not supported or response body missing";
-      return;
-    }
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    while (true) {
-      // Check if aborted
-      if (signal?.aborted) {
-        reader.cancel();
-        return;
-      }
-
-      let readResult;
-      try {
-        readResult = await reader.read();
-      } catch (readError) {
-        // Check if aborted
-        if (
-          signal?.aborted ||
-          (readError instanceof Error && readError.name === "AbortError")
-        ) {
-          return; // Silently return on abort
+        if (!response.ok) {
+          const errorText = await response.text().catch(() => "");
+          throw classifyHttpFailure(
+            response.status,
+            response.statusText,
+            errorText,
+            response.headers.get("Retry-After")
+          );
         }
-        yield `Error reading stream: ${
-          readError instanceof Error ? readError.message : "Unknown error"
-        }`;
-        return;
-      }
-      const { done, value } = readResult;
-      if (done) break;
 
-      // Check if aborted before processing
-      if (signal?.aborted) {
-        reader.cancel();
-        return;
-      }
-
-      buffer += decoder.decode(value, { stream: true });
-
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-      for (const line of lines) {
-        if (line.startsWith("data:")) {
-          const trimmed = line.substring(5).trim();
-          if (!trimmed || trimmed === "[DONE]") continue;
+        if (!provider.streaming) {
+          let json: unknown;
           try {
-            const parsed = JSON.parse(trimmed);
-            const delta = getStreamingContent(
-              parsed,
-              provider?.responseContentPath || ""
+            json = await response.json();
+          } catch (parseError) {
+            throw new RequestFailure("The provider returned invalid JSON.", {
+              kind: "malformed_response",
+              cause: parseError,
+            });
+          }
+          const content = getByPath(json, provider.responseContentPath || "") || "";
+          if (!content) {
+            throw new RequestFailure(
+              "The provider response did not contain text at the configured response path.",
+              { kind: "malformed_response" }
             );
+          }
+          emittedContent = true;
+          yield String(content);
+          return;
+        }
+
+        if (!response.body) {
+          throw new RequestFailure("The provider returned no streaming body.", {
+            kind: "malformed_response",
+          });
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        const processLine = (line: string): string => {
+          if (!line.startsWith("data:")) return "";
+          const trimmed = line.substring(5).trim();
+          if (!trimmed || trimmed === "[DONE]") return "";
+          try {
+            return String(
+              getStreamingContent(
+                JSON.parse(trimmed),
+                provider.responseContentPath || ""
+              ) || ""
+            );
+          } catch {
+            return "";
+          }
+        };
+
+        while (true) {
+          const { done, value } = await readStreamWithTimeout(
+            reader,
+            inactivityTimeoutMs,
+            abortContext.signal
+          );
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+          for (const line of lines) {
+            const delta = processLine(line);
             if (delta) {
+              emittedContent = true;
               yield delta;
             }
-          } catch (e) {
-            // Ignore parsing errors for partial JSON chunks
           }
         }
+
+        const finalDelta = processLine(buffer.trim());
+        if (finalDelta) {
+          emittedContent = true;
+          yield finalDelta;
+        }
+        if (!emittedContent) {
+          throw new RequestFailure(
+            "The provider stream completed without any response text.",
+            { kind: "malformed_response" }
+          );
+        }
+        return;
+      } catch (error) {
+        const failure = normalizeRequestFailure(error, {
+          timedOut: abortContext.didTimeout(),
+          cancelled: signal?.aborted,
+        });
+        if (!emittedContent && failure.retryable && attempt < maxRetries) {
+          onRetry?.(attempt + 1, failure.message);
+          await delayWithSignal(500 * 2 ** attempt, signal);
+          continue;
+        }
+        throw failure;
+      } finally {
+        abortContext.cleanup();
       }
     }
   } catch (error) {
-    throw new Error(
-      `Error in fetchAIResponse: ${
-        error instanceof Error ? error.message : "Unknown error"
-      }`
-    );
+    throw normalizeRequestFailure(error, { cancelled: params.signal?.aborted });
   }
 }
 

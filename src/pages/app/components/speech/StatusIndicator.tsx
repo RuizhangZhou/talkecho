@@ -6,6 +6,8 @@ type Props = {
   isProcessing: boolean;
   isAIProcessing: boolean;
   capturing: boolean;
+  notice: string;
+  queueDepth: number;
 };
 
 export const StatusIndicator = ({
@@ -14,9 +16,11 @@ export const StatusIndicator = ({
   isProcessing,
   isAIProcessing,
   capturing,
+  notice,
+  queueDepth,
 }: Props) => {
   // Don't show anything if not capturing and no error
-  if (!capturing && !error && !isProcessing && !isAIProcessing) {
+  if (!capturing && !error && !notice && !isProcessing && !isAIProcessing) {
     return null;
   }
 
@@ -31,18 +35,30 @@ export const StatusIndicator = ({
       ) : isAIProcessing ? (
         <div className="flex items-center gap-2 animate-pulse">
           <LoaderIcon className="w-4 h-4 animate-spin" />
-          <span className="text-xs font-medium">Generating response...</span>
+          <span className="text-xs font-medium">
+            Generating response{queueDepth > 1 ? ` (${queueDepth - 1} queued)` : ""}...
+          </span>
         </div>
       ) : isProcessing ? (
         <div className="flex items-center gap-2 animate-pulse">
           <LoaderIcon className="w-4 h-4 animate-spin" />
           <span className="text-xs font-medium">Transcribing...</span>
         </div>
+      ) : queueDepth > 0 ? (
+        <div className="flex items-center gap-2 animate-pulse">
+          <LoaderIcon className="w-4 h-4 animate-spin" />
+          <span className="text-xs font-medium">
+            Processing meeting audio{queueDepth > 1 ? ` (${queueDepth - 1} queued)` : ""}...
+          </span>
+        </div>
       ) : capturing ? (
         <div className="flex items-center gap-2 text-green-600 animate-pulse">
           <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
           <span className="text-xs font-medium">Listening...</span>
         </div>
+      ) : null}
+      {notice && !error ? (
+        <span className="text-xs font-medium text-amber-600">{notice}</span>
       ) : null}
     </div>
   );

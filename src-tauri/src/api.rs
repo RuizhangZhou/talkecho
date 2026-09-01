@@ -1,13 +1,49 @@
-﻿use base64::{engine::general_purpose, Engine as _};
+use base64::{engine::general_purpose, Engine as _};
 use futures_util::StreamExt;
 use reqwest::multipart::{Form, Part};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_machine_uid::MachineUidExt;
+use tokio::sync::watch;
+
+static ACTIVE_CHAT_REQUESTS: OnceLock<Mutex<HashMap<String, watch::Sender<bool>>>> =
+    OnceLock::new();
+
+fn active_chat_requests() -> &'static Mutex<HashMap<String, watch::Sender<bool>>> {
+    ACTIVE_CHAT_REQUESTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+struct ChatRequestGuard {
+    request_id: String,
+}
+
+impl Drop for ChatRequestGuard {
+    fn drop(&mut self) {
+        if let Ok(mut requests) = active_chat_requests().lock() {
+            requests.remove(&self.request_id);
+        }
+    }
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ChatStreamChunkPayload {
+    request_id: String,
+    chunk: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ChatStreamCompletePayload {
+    request_id: String,
+}
 
 fn get_app_endpoint() -> Result<String, String> {
     if let Ok(endpoint) = env::var("APP_ENDPOINT") {
@@ -175,7 +211,11 @@ pub async fn transcribe_audio(
     })?;
 
     let audio_bytes = decode_audio_base64(&audio_base64)?;
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("Failed to create transcription client: {e}"))?;
     let error_provider = provider.clone();
     let error_model = model.clone();
 
@@ -244,7 +284,14 @@ pub async fn transcribe_audio(
                     primary_error.clone()
                 };
                 async move {
-                    report_api_error(app, error_msg, "/api/transcribe".to_string(), error_model, error_provider).await;
+                    report_api_error(
+                        app,
+                        error_msg,
+                        "/api/transcribe".to_string(),
+                        error_model,
+                        error_provider,
+                    )
+                    .await;
                 }
             });
             Err("Transcription failed. Please try again.".to_string())
@@ -452,7 +499,21 @@ pub async fn chat_stream_response(
     system_prompt: Option<String>,
     image_base64: Option<serde_json::Value>,
     history: Option<String>,
+    request_id: String,
 ) -> Result<String, String> {
+    let (cancel_tx, mut cancel_rx) = watch::channel(false);
+    {
+        let mut requests = active_chat_requests()
+            .lock()
+            .map_err(|_| "Chat request registry is unavailable".to_string())?;
+        if let Some(previous) = requests.insert(request_id.clone(), cancel_tx) {
+            let _ = previous.send(true);
+        }
+    }
+    let _request_guard = ChatRequestGuard {
+        request_id: request_id.clone(),
+    };
+
     // Get stored credentials to get selected model
     let (_, _, selected_model) = get_stored_credentials(&app).await?;
     let (provider, model) = selected_model.as_ref().map_or((None, None), |m| {
@@ -545,17 +606,26 @@ pub async fn chat_stream_response(
         }
     }
 
-    // Make HTTP request to the configured endpoint with streaming
-    let client = reqwest::Client::new();
+    // Make HTTP request to the configured endpoint with streaming. The
+    // frontend can cancel this request by request ID, including while waiting
+    // for response headers or the next stream chunk.
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(15))
+        .build()
+        .map_err(|e| format!("Failed to create chat client: {e}"))?;
     let error_rules = api_config.errors.clone().unwrap_or_default();
-    let response = match client
+    let send_request = client
         .post(&api_config.url)
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_config.user_token))
         .json(&request_body)
-        .send()
-        .await
-    {
+        .send();
+    tokio::pin!(send_request);
+    let send_result = tokio::select! {
+        result = &mut send_request => result,
+        _ = cancel_rx.changed() => return Err("Request cancelled".to_string()),
+    };
+    let response = match send_result {
         Ok(resp) => resp,
         Err(e) => {
             let mut sources = vec![e.to_string()];
@@ -569,7 +639,8 @@ pub async fn chat_stream_response(
                 let model = model.clone();
                 let error_msg = e.to_string();
                 async move {
-                    report_api_error(app, error_msg, "/api/chat".to_string(), model, provider).await;
+                    report_api_error(app, error_msg, "/api/chat".to_string(), model, provider)
+                        .await;
                 }
             });
             return Err(final_message);
@@ -616,7 +687,14 @@ pub async fn chat_stream_response(
     let mut usage: Option<serde_json::Value> = None;
     let mut stream_started = false;
 
-    while let Some(chunk) = stream.next().await {
+    loop {
+        let next_chunk = tokio::select! {
+            chunk = stream.next() => chunk,
+            _ = cancel_rx.changed() => return Err("Request cancelled".to_string()),
+        };
+        let Some(chunk) = next_chunk else {
+            break;
+        };
         match chunk {
             Ok(bytes) => {
                 let chunk_str = String::from_utf8_lossy(&bytes);
@@ -657,8 +735,15 @@ pub async fn chat_stream_response(
                                                 delta.get("content").and_then(|c| c.as_str())
                                             {
                                                 full_response.push_str(content);
-                                                // Emit just the content to frontend
-                                                let _ = app.emit("chat_stream_chunk", content);
+                                                // Scope events to this request so concurrent
+                                                // windows cannot consume each other's chunks.
+                                                let _ = app.emit(
+                                                    "chat_stream_chunk",
+                                                    ChatStreamChunkPayload {
+                                                        request_id: request_id.clone(),
+                                                        chunk: content.to_string(),
+                                                    },
+                                                );
                                                 stream_started = true;
                                             }
                                         }
@@ -681,7 +766,8 @@ pub async fn chat_stream_response(
                     let model = model.clone();
                     let error_msg = e.to_string();
                     async move {
-                        report_api_error(app, error_msg, "/api/chat".to_string(), model, provider).await;
+                        report_api_error(app, error_msg, "/api/chat".to_string(), model, provider)
+                            .await;
                     }
                 });
                 return Err(final_message);
@@ -689,8 +775,13 @@ pub async fn chat_stream_response(
         }
     }
 
-    // Emit completion event
-    let _ = app.emit("chat_stream_complete", &full_response);
+    // Emit a request-scoped completion event.
+    let _ = app.emit(
+        "chat_stream_complete",
+        ChatStreamCompletePayload {
+            request_id: request_id.clone(),
+        },
+    );
 
     if stream_started && !full_response.is_empty() {
         tauri::async_runtime::spawn({
@@ -711,6 +802,44 @@ pub async fn chat_stream_response(
     }
 
     Ok(full_response)
+}
+
+#[tauri::command]
+pub fn cancel_chat_stream(request_id: String) -> Result<(), String> {
+    let requests = active_chat_requests()
+        .lock()
+        .map_err(|_| "Chat request registry is unavailable".to_string())?;
+    if let Some(cancel_tx) = requests.get(&request_id) {
+        let _ = cancel_tx.send(true);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod chat_cancellation_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn cancellation_is_scoped_to_the_matching_request_id() {
+        let request_id = "test-chat-request".to_string();
+        let other_request_id = "test-chat-request-other".to_string();
+        let (cancel_tx, mut cancel_rx) = watch::channel(false);
+        let (other_tx, other_rx) = watch::channel(false);
+        {
+            let mut requests = active_chat_requests().lock().unwrap();
+            requests.insert(request_id.clone(), cancel_tx);
+            requests.insert(other_request_id.clone(), other_tx);
+        }
+
+        cancel_chat_stream(request_id.clone()).unwrap();
+        cancel_rx.changed().await.unwrap();
+        assert!(*cancel_rx.borrow());
+        assert!(!*other_rx.borrow());
+
+        let mut requests = active_chat_requests().lock().unwrap();
+        requests.remove(&request_id);
+        requests.remove(&other_request_id);
+    }
 }
 
 async fn user_activity(
@@ -1058,4 +1187,3 @@ pub async fn get_activity(app: AppHandle) -> Result<serde_json::Value, String> {
         .await
         .map_err(|e| format!("Failed to parse activity response: {}", e))
 }
-
