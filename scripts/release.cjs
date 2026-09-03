@@ -203,6 +203,11 @@ if (readVersion() === version) {
 
 step(3, TOTAL, 'Build installers');
 
+// Set before the build so step 4 can tell a freshly produced installer from a
+// leftover one with the same version in its filename.
+const buildStartedAt = Date.now();
+let buildError = null;
+
 if (SKIP_BUILD) {
   skipped('Skipping build (--skip-build).');
 } else {
@@ -212,7 +217,16 @@ if (SKIP_BUILD) {
     warning('(they are read via option_env!), so activation / payment / analytics stay off.');
   }
   info('This takes a while (a full Rust release build)...');
-  run('npm run tauri build');
+  try {
+    run('npm run tauri build');
+  } catch (err) {
+    // `tauri build` exits non-zero when updater signing fails, which it always
+    // does while TAURI_SIGNING_PRIVATE_KEY is unset - but it fails *after*
+    // writing both installers. Defer the verdict to the artifact check below
+    // so a signing-only failure doesn't abort an otherwise good release.
+    buildError = err;
+    warning('`npm run tauri build` exited non-zero - checking whether the installers were still produced...');
+  }
 }
 
 // -- 4. verify artifacts -----------------------------------------------------
@@ -221,16 +235,37 @@ step(4, TOTAL, 'Verify artifacts');
 
 const missing = ARTIFACTS.filter((rel) => !fs.existsSync(path.join(ROOT, rel)));
 if (missing.length && !DRY_RUN) {
+  if (buildError) {
+    log('');
+    error(
+      'The build failed and did not produce the installers:\n' +
+        missing.map((m) => `   ${m}`).join('\n') +
+        `\n\n   Build error: ${buildError.message}`
+    );
+  }
   error(`Expected installers were not produced:\n${missing.map((m) => `   ${m}`).join('\n')}`);
 }
 for (const rel of ARTIFACTS) {
   const abs = path.join(ROOT, rel);
   if (fs.existsSync(abs)) {
-    const mb = (fs.statSync(abs).size / 1024 / 1024).toFixed(1);
+    const stat = fs.statSync(abs);
+    const mb = (stat.size / 1024 / 1024).toFixed(1);
+    const stale = !SKIP_BUILD && stat.mtimeMs < buildStartedAt;
+    if (stale) {
+      error(
+        `${path.basename(rel)} is older than this build (last written ${stat.mtime.toISOString()}).\n` +
+          '   The build did not actually regenerate it - refusing to ship a stale installer.'
+      );
+    }
     success(`${path.basename(rel)}  (${mb} MB)`);
   } else {
     warning(`${path.basename(rel)} - not found (dry run)`);
   }
+}
+
+if (buildError) {
+  warning('Both installers exist despite the non-zero build exit - continuing.');
+  warning('This is expected while updater signing is unconfigured (no TAURI_SIGNING_PRIVATE_KEY).');
 }
 
 // Updater signatures, if signing is ever wired up (createUpdaterArtifacts is on
