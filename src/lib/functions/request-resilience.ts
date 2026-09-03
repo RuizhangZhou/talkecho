@@ -48,6 +48,33 @@ const RATE_LIMIT_PATTERN = /(rate.?limit|too many requests|quota exceeded)/i;
 const TRANSIENT_PATTERN =
   /(timed? ?out|timeout|connection (reset|closed|refused)|network|temporarily unavailable|socket|econn|fetch failed)/i;
 
+/**
+ * Parse a `Retry-After` header into milliseconds.
+ *
+ * Returns undefined when the header is absent or unparseable, so callers fall
+ * back to exponential backoff. Note that `Number(null)` and `Number("")` are
+ * both 0, so the null/blank cases must be rejected before coercing - otherwise
+ * a rate-limited response with no header would be retried with no delay at all.
+ */
+export function parseRetryAfterMs(
+  retryAfterHeader?: string | null
+): number | undefined {
+  if (retryAfterHeader == null) return undefined;
+  const raw = retryAfterHeader.trim();
+  if (!raw) return undefined;
+
+  // delta-seconds form, e.g. "120"
+  if (/^\d+(\.\d+)?$/.test(raw)) {
+    return Math.max(0, Number(raw) * 1000);
+  }
+
+  // HTTP-date form, e.g. "Wed, 21 Oct 2015 07:28:00 GMT"
+  const dateMs = Date.parse(raw);
+  if (Number.isFinite(dateMs)) return Math.max(0, dateMs - Date.now());
+
+  return undefined;
+}
+
 export function classifyHttpFailure(
   status: number,
   statusText: string,
@@ -78,10 +105,7 @@ export function classifyHttpFailure(
     });
   }
   if (status === 429 || RATE_LIMIT_PATTERN.test(combined)) {
-    const retryAfterSeconds = Number(retryAfterHeader);
-    const retryAfterMs = Number.isFinite(retryAfterSeconds)
-      ? Math.max(0, retryAfterSeconds * 1000)
-      : undefined;
+    const retryAfterMs = parseRetryAfterMs(retryAfterHeader);
     return new RequestFailure(
       "The provider rate limit was reached. TalkEcho will retry briefly.",
       {
@@ -239,11 +263,13 @@ export async function runWithRetry<T>(
     timeoutMs: number;
     maxRetries: number;
     baseDelayMs?: number;
+    maxDelayMs?: number;
     jitterMs?: number;
     onRetry?: (failure: RequestFailure, nextAttempt: number) => void;
   }
 ): Promise<T> {
   const baseDelayMs = options.baseDelayMs ?? 500;
+  const maxDelayMs = options.maxDelayMs ?? 30_000;
 
   for (let attempt = 0; ; attempt += 1) {
     const abortContext = createLinkedAbortContext(options.signal, options.timeoutMs);
@@ -270,10 +296,10 @@ export async function runWithRetry<T>(
       options.onRetry?.(failure, nextAttempt);
       const jitter = Math.floor(Math.random() * (options.jitterMs ?? 150));
       const backoffMs = baseDelayMs * 2 ** attempt + jitter;
-      await delayWithSignal(
-        failure.retryAfterMs ?? backoffMs,
-        options.signal
-      );
+      // A provider-supplied Retry-After wins over our backoff, but is capped so
+      // a large value cannot stall the meeting pipeline indefinitely.
+      const delayMs = Math.min(failure.retryAfterMs ?? backoffMs, maxDelayMs);
+      await delayWithSignal(delayMs, options.signal);
     } finally {
       if (onAttemptAbort) {
         abortContext.signal.removeEventListener("abort", onAttemptAbort);

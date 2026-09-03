@@ -14,6 +14,35 @@ describe("request failure classification", () => {
     expect(classifyHttpFailure(503, "Unavailable").retryable).toBe(true);
   });
 
+  it("falls back to backoff when Retry-After is absent or unusable", () => {
+    // response.headers.get() returns null for a missing header. Number(null) is
+    // 0, which would previously produce a zero-delay retry storm.
+    expect(
+      classifyHttpFailure(429, "Too Many Requests", "", null).retryAfterMs
+    ).toBeUndefined();
+    expect(
+      classifyHttpFailure(429, "Too Many Requests", "", "").retryAfterMs
+    ).toBeUndefined();
+    expect(
+      classifyHttpFailure(429, "Too Many Requests", "", "soon").retryAfterMs
+    ).toBeUndefined();
+    expect(
+      classifyHttpFailure(429, "Too Many Requests").retryAfterMs
+    ).toBeUndefined();
+  });
+
+  it("understands the HTTP-date form of Retry-After", () => {
+    const twoSecondsOut = new Date(Date.now() + 2_000).toUTCString();
+    const parsed = classifyHttpFailure(
+      429,
+      "Too Many Requests",
+      "",
+      twoSecondsOut
+    ).retryAfterMs;
+    expect(parsed).toBeGreaterThan(0);
+    expect(parsed).toBeLessThanOrEqual(2_000);
+  });
+
   it("never retries context-window failures", () => {
     const failure = classifyHttpFailure(
       400,
