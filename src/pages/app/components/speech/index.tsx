@@ -28,6 +28,8 @@ export const SystemAudio = (props: useAudioOverlayType) => {
     lastTranscription,
     lastAIResponse,
     error,
+    notice,
+    queueDepth,
     setupRequired,
     startCapture,
     stopCapture,
@@ -100,6 +102,8 @@ export const SystemAudio = (props: useAudioOverlayType) => {
                 isProcessing={isProcessing}
                 isAIProcessing={isAIProcessing}
                 capturing={capturing}
+                notice={notice}
+                queueDepth={queueDepth}
               />
 
               {/* Header - Hide when there are messages to save space */}

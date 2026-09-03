@@ -19,6 +19,8 @@ export function useCustomAiProviders() {
     streaming: false,
     responseContentPath: "",
     isCustom: true,
+    contextWindowTokens: 16000,
+    maxOutputTokens: 1024,
     curl: "",
   });
 
@@ -45,6 +47,8 @@ export function useCustomAiProviders() {
     setFormData({
       ...provider,
       curl: provider.curl,
+      contextWindowTokens: 16000,
+      maxOutputTokens: 1024,
     });
 
     setErrors({});
@@ -88,6 +92,20 @@ export function useCustomAiProviders() {
     if (!formData.responseContentPath?.trim()) {
       newErrors.responseContentPath = "Response content path is required";
     }
+    if (
+      formData.contextWindowTokens !== undefined &&
+      (!Number.isFinite(formData.contextWindowTokens) ||
+        formData.contextWindowTokens < 2048)
+    ) {
+      newErrors.contextWindowTokens = "Context window must be at least 2048 tokens";
+    }
+    if (
+      formData.maxOutputTokens !== undefined &&
+      (!Number.isFinite(formData.maxOutputTokens) ||
+        formData.maxOutputTokens < 256)
+    ) {
+      newErrors.maxOutputTokens = "Output reserve must be at least 256 tokens";
+    }
 
     setErrors(newErrors);
 
@@ -102,6 +120,8 @@ export function useCustomAiProviders() {
           curl: formData.curl,
           streaming: formData.streaming,
           responseContentPath: formData.responseContentPath,
+          contextWindowTokens: formData.contextWindowTokens,
+          maxOutputTokens: formData.maxOutputTokens,
         });
 
         if (success) {
@@ -112,6 +132,8 @@ export function useCustomAiProviders() {
             streaming: false,
             responseContentPath: "",
             isCustom: true,
+            contextWindowTokens: 16000,
+            maxOutputTokens: 1024,
             curl: "",
           });
           loadData(); // Refresh data
@@ -122,6 +144,8 @@ export function useCustomAiProviders() {
           curl: formData.curl,
           streaming: formData.streaming,
           responseContentPath: formData.responseContentPath,
+          contextWindowTokens: formData.contextWindowTokens,
+          maxOutputTokens: formData.maxOutputTokens,
         };
 
         const saved = addCustomAiProvider(newProvider);
@@ -132,6 +156,8 @@ export function useCustomAiProviders() {
             streaming: false,
             responseContentPath: "",
             isCustom: true,
+            contextWindowTokens: 16000,
+            maxOutputTokens: 1024,
             curl: "",
           });
           loadData(); // Refresh data

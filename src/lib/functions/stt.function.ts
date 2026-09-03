@@ -9,6 +9,15 @@ import { invoke } from "@tauri-apps/api/core";
 import { TYPE_PROVIDER } from "@/types";
 import curl2Json from "@bany/curl-to-json";
 import { shouldUseTalkEchoAPI } from "./talkecho.api";
+import {
+  classifyHttpFailure,
+  normalizeRequestFailure,
+  RequestFailure,
+  runWithRetry,
+} from "./request-resilience";
+
+const DEFAULT_STT_TIMEOUT_MS = 30_000;
+const DEFAULT_STT_MAX_RETRIES = 1;
 
 // TalkEcho STT function
 async function fetchTalkEchoSTT(audio: File | Blob, language?: string): Promise<string> {
@@ -36,12 +45,10 @@ async function fetchTalkEchoSTT(audio: File | Blob, language?: string): Promise<
       }
 
       return transcription;
-    } else {
-      return response.error || "Transcription failed";
     }
+    throw new Error(response.error || "Transcription failed");
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    return `TalkEcho STT Error: ${errorMessage}`;
+    throw normalizeRequestFailure(error);
   }
 }
 
@@ -54,6 +61,9 @@ export interface STTParams {
   audio: File | Blob;
   language?: string;
   onDebug?: (message: string) => void;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  maxRetries?: number;
 }
 
 /**
@@ -135,7 +145,16 @@ export async function fetchSTT(params: STTParams): Promise<string> {
   let warnings: string[] = [];
 
   try {
-    const { provider, selectedProvider, audio, language, onDebug } = params;
+    const {
+      provider,
+      selectedProvider,
+      audio,
+      language,
+      onDebug,
+      signal,
+      timeoutMs = DEFAULT_STT_TIMEOUT_MS,
+      maxRetries = DEFAULT_STT_MAX_RETRIES,
+    } = params;
 
     // Validate audio quality first
     const validation = await validateAudioQuality(audio);
@@ -148,7 +167,37 @@ export async function fetchSTT(params: STTParams): Promise<string> {
     // Check if we should use TalkEcho API instead
     const useTalkEchoAPI = await shouldUseTalkEchoAPI();
     if (useTalkEchoAPI) {
-      return await fetchTalkEchoSTT(audio, language);
+      return await runWithRetry(
+        async ({ signal: attemptSignal }) => {
+          const transcriptionPromise = fetchTalkEchoSTT(audio, language);
+          const abortPromise = new Promise<never>((_, reject) => {
+            attemptSignal.addEventListener(
+              "abort",
+              () =>
+                reject(
+                  new RequestFailure("Speech transcription timed out.", {
+                    kind: "timeout",
+                    retryable: true,
+                  })
+                ),
+              { once: true }
+            );
+          });
+          return await Promise.race([transcriptionPromise, abortPromise]);
+        },
+        {
+          signal,
+          timeoutMs,
+          // The TalkEcho backend already has a configured STT fallback. Its
+          // Tauri invoke cannot be safely replayed while the first invocation
+          // may still be unwinding, so do not add a second frontend retry.
+          maxRetries: 0,
+          onRetry: (failure, nextAttempt) =>
+            onDebug?.(
+              `STT retry ${nextAttempt}/${maxRetries}: ${failure.message}`
+            ),
+        }
+      );
     }
 
     if (!provider) throw new Error("Provider not provided");
@@ -313,41 +362,61 @@ export async function fetchSTT(params: STTParams): Promise<string> {
     const fetchFunction = url?.includes("http") ? fetch : tauriFetch;
 
     // Send request
-    let response: Response;
-    try {
-      response = await fetchFunction(url, {
-        method: curlJson.method || "POST",
-        headers: finalHeaders,
-        body: curlJson.method === "GET" ? undefined : body,
-      });
-    } catch (e) {
-      throw new Error(`Network error: ${e instanceof Error ? e.message : e}`);
-    }
+    const sttResponse = await runWithRetry(
+      async ({ signal: attemptSignal }) => {
+        let result: Response;
+        try {
+          result = await fetchFunction(url, {
+            method: curlJson.method || "POST",
+            headers: finalHeaders,
+            body: curlJson.method === "GET" ? undefined : body,
+            signal: attemptSignal,
+          });
+        } catch (error) {
+          throw normalizeRequestFailure(error, {
+            cancelled: signal?.aborted,
+          });
+        }
 
-    if (!response.ok) {
-      let errText = "";
-      try {
-        errText = await response.text();
-      } catch {}
-      let errMsg: string;
-      try {
-        const errObj = JSON.parse(errText);
-        errMsg = errObj.message || errText;
-      } catch {
-        errMsg = errText || response.statusText;
+        if (!result.ok) {
+          const errorText = await result.text().catch(() => "");
+          throw classifyHttpFailure(
+            result.status,
+            result.statusText,
+            errorText,
+            result.headers.get("Retry-After")
+          );
+        }
+        return {
+          status: result.status,
+          text: await result.text(),
+        };
+      },
+      {
+        signal,
+        timeoutMs,
+        maxRetries,
+        onRetry: (failure, nextAttempt) =>
+          onDebug?.(`STT retry ${nextAttempt}/${maxRetries}: ${failure.message}`),
       }
-      throw new Error(`HTTP ${response.status}: ${errMsg}`);
-    }
+    );
 
-    const responseText = await response.text();
+    const responseText = sttResponse.text;
     onDebug?.(
-      `STT response received: status=${response.status} bytes=${responseText.length}`
+      `STT response received: status=${sttResponse.status} bytes=${responseText.length}`
     );
     let data: any;
     try {
       data = JSON.parse(responseText);
     } catch {
-      return [...warnings, responseText.trim()].filter(Boolean).join("; ");
+      const plainText = responseText.trim();
+      if (!plainText) {
+        throw new RequestFailure("The STT provider returned an empty response.", {
+          kind: "malformed_response",
+        });
+      }
+      if (isLikelyHallucination(plainText)) return "";
+      return [...warnings, plainText].filter(Boolean).join("; ");
     }
 
     // Extract transcription
@@ -356,7 +425,10 @@ export async function fetchSTT(params: STTParams): Promise<string> {
     const transcription = (getByPath(data, path) || "").trim();
 
     if (!transcription) {
-      return [...warnings, "No transcription found"].join("; ");
+      throw new RequestFailure(
+        `The STT response did not contain text at "${rawPath}". Check the configured response path.`,
+        { kind: "malformed_response" }
+      );
     }
 
     // Check for hallucinations
@@ -369,8 +441,7 @@ export async function fetchSTT(params: STTParams): Promise<string> {
     // Return transcription with any warnings
     return [...warnings, transcription].filter(Boolean).join("; ");
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(msg);
+    throw normalizeRequestFailure(err, { cancelled: params.signal?.aborted });
   }
 }
 

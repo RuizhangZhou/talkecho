@@ -100,6 +100,7 @@ pub fn run() {
             activate::secure_storage_remove,
             api::transcribe_audio,
             api::chat_stream_response,
+            api::cancel_chat_stream,
             api::fetch_models,
             api::create_system_prompt,
             api::check_license_status,

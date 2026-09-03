@@ -3,7 +3,17 @@ import { useWindowResize, useGlobalShortcuts } from ".";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useApp } from "@/contexts";
-import { fetchSTT, fetchAIResponse } from "@/lib/functions";
+import {
+  buildMeetingReferenceContext,
+  estimateTextTokens,
+  fetchSTT,
+  fetchAIResponse,
+  formatRequestFailure,
+  getProviderTokenBudget,
+  RequestFailure,
+  selectRecentHistory,
+  SerialTaskQueue,
+} from "@/lib/functions";
 import { MicVAD } from "@ricky0123/vad-web";
 import {
   DEFAULT_QUICK_ACTIONS,
@@ -43,6 +53,7 @@ const MIC_VAD_FRAME_SAMPLES = 512;
 const MIC_VAD_FRAME_MS = (MIC_VAD_FRAME_SAMPLES / MIC_VAD_SAMPLE_RATE) * 1000;
 // Higher = stricter detection of user speech for microphone VAD
 const DEFAULT_USER_SPEAKING_THRESHOLD = 0.85;
+const MEETING_QUEUE_CAPACITY = 8;
 
 // Mic VAD tuning (front-end @ricky0123/vad-web)
 // These are conservative defaults to reduce false positives
@@ -133,6 +144,8 @@ export function useAudioOverlay() {
   const [lastTranscription, setLastTranscription] = useState<string>("");
   const [lastAIResponse, setLastAIResponse] = useState<string>("");
   const [error, setError] = useState<string>("");
+  const [notice, setNotice] = useState<string>("");
+  const [queueDepth, setQueueDepth] = useState(0);
   const [setupRequired, setSetupRequired] = useState<boolean>(false);
   const [quickActions, setQuickActions] = useState<string[]>([]);
   const [isManagingQuickActions, setIsManagingQuickActions] =
@@ -196,12 +209,25 @@ export function useAudioOverlay() {
     selectedAudioDevices,
   } = useApp();
   const abortControllerRef = useRef<AbortController | null>(null);
+  const meetingRequestControllersRef = useRef(new Set<AbortController>());
+  const meetingQueueRef = useRef<SerialTaskQueue | null>(null);
+  if (!meetingQueueRef.current) {
+    meetingQueueRef.current = new SerialTaskQueue(
+      MEETING_QUEUE_CAPACITY,
+      setQueueDepth
+    );
+  }
   const aiQueueRef = useRef<Promise<void>>(Promise.resolve());
   const aiQueueGenerationRef = useRef(0);
   const lastSpeechEventRef = useRef({ fingerprint: "", receivedAt: 0 });
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isSavingRef = useRef<boolean>(false);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const conversationRef = useRef(conversation);
+
+  useEffect(() => {
+    conversationRef.current = conversation;
+  }, [conversation]);
 
   // Ref to hold the microphone processing function to avoid closure issues
   const processMicrophoneAudioRef = useRef<((audio: Float32Array) => Promise<void>) | null>(null);
@@ -396,16 +422,22 @@ export function useAudioOverlay() {
 
   // Listen for includeMicrophone setting changes from SystemAudioSettings (across windows)
   useEffect(() => {
+    let disposed = false;
     let unlisten: (() => void) | undefined;
 
     const setupListener = async () => {
       try {
-        unlisten = await listen<{ value: boolean }>("includeMicrophoneChanged", (event) => {
-          const newValue = event.payload?.value;
-          if (typeof newValue === "boolean") {
-            setIncludeMicrophone(newValue);
+        const registeredUnlisten = await listen<{ value: boolean }>(
+          "includeMicrophoneChanged",
+          (event) => {
+            const newValue = event.payload?.value;
+            if (typeof newValue === "boolean") {
+              setIncludeMicrophone(newValue);
+            }
           }
-        });
+        );
+        if (disposed) registeredUnlisten();
+        else unlisten = registeredUnlisten;
       } catch (error) {
         console.error("Failed to listen for includeMicrophoneChanged event:", error);
       }
@@ -414,6 +446,7 @@ export function useAudioOverlay() {
     setupListener();
 
     return () => {
+      disposed = true;
       if (unlisten) {
         unlisten();
       }
@@ -421,11 +454,12 @@ export function useAudioOverlay() {
   }, []);
 
   useEffect(() => {
+    let disposed = false;
     let unlisten: (() => void) | undefined;
 
     const setupListener = async () => {
       try {
-        unlisten = await listen<{ config: VadConfig }>(
+        const registeredUnlisten = await listen<{ config: VadConfig }>(
           "vadConfigChanged",
           async (event) => {
             const newConfig = event.payload?.config;
@@ -438,6 +472,8 @@ export function useAudioOverlay() {
             });
           }
         );
+        if (disposed) registeredUnlisten();
+        else unlisten = registeredUnlisten;
       } catch (error) {
         console.error("Failed to listen for vadConfigChanged event:", error);
       }
@@ -446,6 +482,7 @@ export function useAudioOverlay() {
     setupListener();
 
     return () => {
+      disposed = true;
       if (unlisten) {
         unlisten();
       }
@@ -472,6 +509,7 @@ export function useAudioOverlay() {
 
   // Handle continuous recording progress events AND error events
   useEffect(() => {
+    let disposed = false;
     let progressUnlisten: (() => void) | undefined;
     let startUnlisten: (() => void) | undefined;
     let stopUnlisten: (() => void) | undefined;
@@ -481,25 +519,31 @@ export function useAudioOverlay() {
     const setupContinuousListeners = async () => {
       try {
         // Progress updates (every second)
-        progressUnlisten = await listen("recording-progress", (event) => {
+        const registeredProgress = await listen("recording-progress", (event) => {
           const seconds = event.payload as number;
           setRecordingProgress(seconds);
         });
+        if (disposed) registeredProgress();
+        else progressUnlisten = registeredProgress;
 
         // Recording started
-        startUnlisten = await listen("continuous-recording-start", () => {
+        const registeredStart = await listen("continuous-recording-start", () => {
           setRecordingProgress(0);
           setIsRecordingInContinuousMode(true);
         });
+        if (disposed) registeredStart();
+        else startUnlisten = registeredStart;
 
         // Recording stopped
-        stopUnlisten = await listen("continuous-recording-stopped", () => {
+        const registeredStop = await listen("continuous-recording-stopped", () => {
           setRecordingProgress(0);
           setIsRecordingInContinuousMode(false);
         });
+        if (disposed) registeredStop();
+        else stopUnlisten = registeredStop;
 
         // Audio encoding errors
-        errorUnlisten = await listen("audio-encoding-error", (event) => {
+        const registeredError = await listen("audio-encoding-error", (event) => {
           const errorMsg = event.payload as string;
           console.error("Audio encoding error:", errorMsg);
           setError(`Failed to process audio: ${errorMsg}`);
@@ -507,11 +551,15 @@ export function useAudioOverlay() {
           setIsAIProcessing(false);
           setIsRecordingInContinuousMode(false);
         });
+        if (disposed) registeredError();
+        else errorUnlisten = registeredError;
 
         // Speech discarded (too short)
-        discardedUnlisten = await listen("speech-discarded", () => {
+        const registeredDiscarded = await listen("speech-discarded", () => {
           // Don't show error - this is expected behavior
         });
+        if (disposed) registeredDiscarded();
+        else discardedUnlisten = registeredDiscarded;
       } catch (err) {
         console.error("Failed to setup continuous recording listeners:", err);
       }
@@ -520,6 +568,7 @@ export function useAudioOverlay() {
     setupContinuousListeners();
 
     return () => {
+      disposed = true;
       if (progressUnlisten) progressUnlisten();
       if (startUnlisten) startUnlisten();
       if (stopUnlisten) stopUnlisten();
@@ -535,99 +584,103 @@ export function useAudioOverlay() {
 
     const setupEventListener = async () => {
       try {
-        const unlisten = await listen("speech-detected", async (event) => {
-          try {
-            if (!capturing) return;
+        const unlisten = await listen("speech-detected", (event) => {
+          if (!capturing) return;
 
-            const base64Audio = event.payload as string;
-            const fingerprint = `${base64Audio.length}:${base64Audio.slice(
-              0,
-              64
-            )}:${base64Audio.slice(-64)}`;
-            const receivedAt = Date.now();
-            if (
-              lastSpeechEventRef.current.fingerprint === fingerprint &&
-              receivedAt - lastSpeechEventRef.current.receivedAt < 10_000
-            ) {
-              console.warn("Skipping duplicate speech-detected event");
-              return;
-            }
-            lastSpeechEventRef.current = { fingerprint, receivedAt };
+          const base64Audio = event.payload as string;
+          const fingerprint = `${base64Audio.length}:${base64Audio.slice(
+            0,
+            64
+          )}:${base64Audio.slice(-64)}`;
+          const receivedAt = Date.now();
+          if (
+            lastSpeechEventRef.current.fingerprint === fingerprint &&
+            receivedAt - lastSpeechEventRef.current.receivedAt < 10_000
+          ) {
+            console.warn("Skipping duplicate speech-detected event");
+            return;
+          }
+          lastSpeechEventRef.current = { fingerprint, receivedAt };
 
-            // Convert to blob (system audio only, microphone handled separately)
-            const binaryString = atob(base64Audio);
-            const bytes = new Uint8Array(binaryString.length);
-            for (let i = 0; i < binaryString.length; i++) {
-              bytes[i] = binaryString.charCodeAt(i);
-            }
-            const audioBlob = new Blob([bytes], { type: "audio/wav" });
+          void meetingQueueRef.current!
+            .enqueue(async () => {
+              const controller = new AbortController();
+              meetingRequestControllersRef.current.add(controller);
+              setIsProcessing(true);
+              setNotice("");
 
-            const useTalkEchoAPI = await shouldUseTalkEchoAPI();
-            if (!selectedSttProvider.provider && !useTalkEchoAPI) {
-              setError("No speech provider selected.");
-              return;
-            }
+              try {
+                const binaryString = atob(base64Audio);
+                const bytes = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) {
+                  bytes[i] = binaryString.charCodeAt(i);
+                }
+                const audioBlob = new Blob([bytes], { type: "audio/wav" });
 
-            const providerConfig = allSttProviders.find(
-              (p) => p.id === selectedSttProvider.provider
-            );
+                const useTalkEchoAPI = await shouldUseTalkEchoAPI();
+                if (!selectedSttProvider.provider && !useTalkEchoAPI) {
+                  throw new Error("No speech provider selected.");
+                }
 
-            if (!providerConfig && !useTalkEchoAPI) {
-              setError("Speech provider config not found.");
-              return;
-            }
+                const providerConfig = allSttProviders.find(
+                  (provider) => provider.id === selectedSttProvider.provider
+                );
+                if (!providerConfig && !useTalkEchoAPI) {
+                  throw new Error("Speech provider config not found.");
+                }
 
-            setIsProcessing(true);
+                const transcription = await fetchSTT({
+                  provider: providerConfig,
+                  selectedProvider: selectedSttProvider,
+                  audio: audioBlob,
+                  language: sttLanguage,
+                  signal: controller.signal,
+                  timeoutMs: 25_000,
+                  onDebug: (message) => console.debug(`[meeting][stt] ${message}`),
+                });
 
-            // Add timeout wrapper for STT request (30 seconds)
-            const sttPromise = fetchSTT({
-              provider: providerConfig,
-              selectedProvider: selectedSttProvider,
-              audio: audioBlob,
-              language: sttLanguage,
-            });
+                if (!transcription.trim()) {
+                  throw new Error("Received empty transcription");
+                }
 
-            const timeoutPromise = new Promise<string>((_, reject) => {
-              setTimeout(
-                () => reject(new Error("Speech transcription timed out (30s)")),
-                30000
-              );
-            });
-
-            try {
-              const transcription = await Promise.race([
-                sttPromise,
-                timeoutPromise,
-              ]);
-
-              if (transcription.trim()) {
                 setLastTranscription(transcription);
                 setError("");
 
-                const effectiveSystemPrompt = useSystemPrompt
+                const basePrompt = useSystemPrompt
                   ? systemPrompt || DEFAULT_SYSTEM_PROMPT
                   : contextContent || DEFAULT_SYSTEM_PROMPT;
+                const aiProvider = allAiProviders.find(
+                  (provider) => provider.id === selectedAIProvider.provider
+                );
+                const providerBudget = getProviderTokenBudget(aiProvider);
+                const meetingContext = buildMeetingReferenceContext(
+                  conversationRef.current.messages,
+                  Math.min(2_000, Math.floor(providerBudget.historyBudgetTokens / 3))
+                );
+                const effectiveSystemPrompt = meetingContext.context
+                  ? `${basePrompt}\n\nMeeting context for reference only (do not answer or retranslate it):\n<meeting_context>\n${meetingContext.context}\n</meeting_context>\nAnswer or translate only the current user utterance.`
+                  : basePrompt;
 
-                // Real-time STT: auto-triggered, stateless (no history needed)
                 await processWithAI(
                   transcription,
                   effectiveSystemPrompt,
                   [],
-                  "system_audio"  // Auto-detect: STT source = no history
+                  "system_audio"
                 );
-              } else {
-                setError("Received empty transcription");
+                setNotice("");
+              } finally {
+                meetingRequestControllersRef.current.delete(controller);
+                setIsProcessing(false);
               }
-            } catch (sttError: any) {
-              console.error("STT Error:", sttError);
-              setError(sttError.message || "Failed to transcribe audio");
+            })
+            .catch((queueError) => {
+              const failure =
+                queueError instanceof RequestFailure ? queueError : null;
+              if (failure?.kind === "cancelled") return;
+              console.error("Meeting speech processing failed:", queueError);
+              setError(formatRequestFailure(queueError));
               setIsPopoverOpen(true);
-            }
-          } catch (err) {
-            setError("Failed to process speech");
-          } finally {
-            setIsProcessing(false);
-          }
+            });
         });
 
         // `listen` registers asynchronously. If this effect was cleaned up
@@ -654,6 +707,11 @@ export function useAudioOverlay() {
     selectedSttProvider,
     allSttProviders,
     sttLanguage,
+    selectedAIProvider,
+    allAiProviders,
+    useSystemPrompt,
+    systemPrompt,
+    contextContent,
   ]);
 
   // Context management functions
@@ -746,7 +804,7 @@ export function useAudioOverlay() {
 
     const previousMessages = buildConversationHistory();
 
-    // Q&A mode: manual input with full conversation history
+    // Q&A mode: runAIRequest applies the selected provider's history budget.
     await processWithAI(action, effectiveSystemPrompt, previousMessages, "manual");
   };
 
@@ -791,8 +849,10 @@ export function useAudioOverlay() {
   }, [isContinuousMode, isRecordingInContinuousMode]);
 
   // Microphone audio processing function (for dual-track mode)
-  const processMicrophoneAudio = useCallback(
+  const processMicrophoneAudioNow = useCallback(
     async (audioData: Float32Array) => {
+      const controller = new AbortController();
+      meetingRequestControllersRef.current.add(controller);
       try {
         setIsMicProcessing(true);
         setError("");
@@ -821,6 +881,8 @@ export function useAudioOverlay() {
           selectedProvider: selectedSttProvider,
           audio: audioBlob,
           language: sttLanguage,
+          signal: controller.signal,
+          onDebug: (message) => console.debug(`[meeting][mic-stt] ${message}`),
         });
 
         if (!transcription.trim()) {
@@ -828,8 +890,9 @@ export function useAudioOverlay() {
           return;
         }
 
-        // AI translation (independent, no history needed for translation)
-        const effectiveSystemPrompt = useSystemPrompt
+        // AI translation uses recent raw meeting context in the system prompt;
+        // prior AI translations are deliberately excluded from message history.
+        const basePrompt = useSystemPrompt
           ? systemPrompt || DEFAULT_SYSTEM_PROMPT
           : contextContent || DEFAULT_SYSTEM_PROMPT;
 
@@ -846,56 +909,81 @@ export function useAudioOverlay() {
           return;
         }
 
+        const providerBudget = getProviderTokenBudget(aiProvider);
+        const meetingContext = buildMeetingReferenceContext(
+          conversationRef.current.messages,
+          Math.min(2_000, Math.floor(providerBudget.historyBudgetTokens / 3))
+        );
+        const effectiveSystemPrompt = meetingContext.context
+          ? `${basePrompt}\n\nMeeting context for reference only (do not answer or retranslate it):\n<meeting_context>\n${meetingContext.context}\n</meeting_context>\nAnswer or translate only the current user utterance.`
+          : basePrompt;
+
         let fullResponse = "";
         try {
           for await (const chunk of fetchAIResponse({
             provider: useTalkEchoAPI ? undefined : aiProvider,
             selectedProvider: selectedAIProvider,
             systemPrompt: effectiveSystemPrompt,
-            history: [], // No history for independent translation
+            history: [],
             userMessage: transcription,
             imagesBase64: [],
+            signal: controller.signal,
+            timeoutMs: 60_000,
+            inactivityTimeoutMs: 20_000,
+            onRetry: (attempt, reason) => {
+              setNotice(`Retrying microphone AI request (${attempt}): ${reason}`);
+            },
           })) {
             fullResponse += chunk;
           }
         } catch (aiError: any) {
           console.error("Microphone AI error:", aiError);
-          setError(aiError.message || "Failed to get AI response for microphone");
+          if (!(aiError instanceof RequestFailure && aiError.kind === "cancelled")) {
+            setError(formatRequestFailure(aiError));
+          }
         }
 
         // Save to conversation with microphone source
         // Always save the transcription, even if translation fails
         const timestamp = Date.now();
-        setConversation((prev) => ({
-          ...prev,
-          messages: [
-            {
-              id: generateMessageId("user", timestamp),
-              role: "user" as const,
-              content: transcription,
-              timestamp,
-              source: "microphone" as const,
-            },
-            ...(fullResponse
-              ? [
-                  {
-                    id: generateMessageId("assistant", timestamp + 1),
-                    role: "assistant" as const,
-                    content: fullResponse,
-                    timestamp: timestamp + 1,
-                    source: "microphone" as const,
-                  },
-                ]
-              : []),
-            ...prev.messages,
-          ],
-          updatedAt: timestamp,
-          title: prev.title || generateConversationTitle(transcription),
-        }));
+        setConversation((prev) => {
+          const nextConversation = {
+            ...prev,
+            messages: [
+              {
+                id: generateMessageId("user", timestamp),
+                role: "user" as const,
+                content: transcription,
+                timestamp,
+                source: "microphone" as const,
+              },
+              ...(fullResponse
+                ? [
+                    {
+                      id: generateMessageId("assistant", timestamp + 1),
+                      role: "assistant" as const,
+                      content: fullResponse,
+                      timestamp: timestamp + 1,
+                      source: "microphone" as const,
+                    },
+                  ]
+                : []),
+              ...prev.messages,
+            ],
+            updatedAt: timestamp,
+            title: prev.title || generateConversationTitle(transcription),
+          };
+          conversationRef.current = nextConversation;
+          return nextConversation;
+        });
+        setNotice("");
       } catch (err) {
         console.error("Microphone processing error:", err);
-        setError("Failed to process microphone audio");
+        if (!(err instanceof RequestFailure && err.kind === "cancelled")) {
+          setError(formatRequestFailure(err));
+        }
       } finally {
+        meetingRequestControllersRef.current.delete(controller);
         setIsMicProcessing(false);
       }
     },
@@ -909,6 +997,21 @@ export function useAudioOverlay() {
       useSystemPrompt,
       contextContent,
     ]
+  );
+
+  const processMicrophoneAudio = useCallback(
+    async (audioData: Float32Array) => {
+      try {
+        await meetingQueueRef.current!.enqueue(() =>
+          processMicrophoneAudioNow(audioData)
+        );
+      } catch (error) {
+        if (!(error instanceof RequestFailure && error.kind === "cancelled")) {
+          setError(formatRequestFailure(error));
+        }
+      }
+    },
+    [processMicrophoneAudioNow]
   );
 
   // Update the ref whenever the processing function changes
@@ -948,10 +1051,32 @@ export function useAudioOverlay() {
           return;
         }
 
-        // Auto-detect: only "manual" input needs history, all STT-triggered sources are stateless.
-        // For "instant ask" (manual input), include the full conversation history.
-        const history: CompletionMessage[] =
-          source === "manual" ? previousMessages : [];
+        // Instant Ask uses a provider-aware recent-history budget. Automatic
+        // meeting translation receives a smaller raw-transcript reference in
+        // its system prompt and does not resend prior AI translations.
+        let history: CompletionMessage[] = [];
+        if (source === "manual") {
+          const budget = getProviderTokenBudget(provider);
+          const fixedTokens =
+            estimateTextTokens(prompt) + estimateTextTokens(transcription) + 64;
+          const selectedHistory = selectRecentHistory(
+            previousMessages,
+            Math.max(512, budget.historyBudgetTokens - fixedTokens)
+          );
+          history = selectedHistory.history as CompletionMessage[];
+          if (selectedHistory.omittedMessages > 0) {
+            setNotice(
+              `Using recent context: ${selectedHistory.omittedMessages} older messages were omitted to stay within the model context window.`
+            );
+          } else {
+            setNotice("");
+          }
+          console.debug("[meeting][context]", {
+            estimatedHistoryTokens: selectedHistory.estimatedTokens,
+            omittedMessages: selectedHistory.omittedMessages,
+            contextWindowTokens: budget.contextWindowTokens,
+          });
+        }
 
         try {
           for await (const chunk of fetchAIResponse({
@@ -962,43 +1087,59 @@ export function useAudioOverlay() {
             userMessage: transcription,
             imagesBase64: [],
             signal: controller.signal,
+            timeoutMs: 60_000,
+            inactivityTimeoutMs: 20_000,
+            onRetry: (attempt, reason) => {
+              setNotice(`Retrying AI request (${attempt}): ${reason}`);
+              console.warn(`[meeting][ai] retry ${attempt}: ${reason}`);
+            },
           })) {
             fullResponse += chunk;
             setLastAIResponse((prev) => prev + chunk);
           }
         } catch (aiError: any) {
           if (!controller.signal.aborted) {
-            setError(aiError.message || "Failed to get AI response");
+            setError(formatRequestFailure(aiError));
           }
         }
 
-        if (!controller.signal.aborted && fullResponse) {
+        if (!controller.signal.aborted) {
           const timestamp = Date.now();
-          setConversation((prev) => ({
-            ...prev,
-            messages: [
-              {
-                id: generateMessageId("user", timestamp),
-                role: "user" as const,
-                content: transcription,
-                timestamp,
-                source: source ?? "system_audio",
-              },
-              {
-                id: generateMessageId("assistant", timestamp + 1),
-                role: "assistant" as const,
-                content: fullResponse,
-                timestamp: timestamp + 1,
-                source: source ?? "system_audio",
-              },
-              ...prev.messages,
-            ],
-            updatedAt: timestamp,
-            title: prev.title || generateConversationTitle(transcription),
-          }));
+          setConversation((prev) => {
+            const nextConversation = {
+              ...prev,
+              messages: [
+                {
+                  id: generateMessageId("user", timestamp),
+                  role: "user" as const,
+                  content: transcription,
+                  timestamp,
+                  source: source ?? "system_audio",
+                },
+                ...(fullResponse
+                  ? [
+                      {
+                        id: generateMessageId("assistant", timestamp + 1),
+                        role: "assistant" as const,
+                        content: fullResponse,
+                        timestamp: timestamp + 1,
+                        source: source ?? "system_audio",
+                      },
+                    ]
+                  : []),
+                ...prev.messages,
+              ],
+              updatedAt: timestamp,
+              title: prev.title || generateConversationTitle(transcription),
+            };
+            conversationRef.current = nextConversation;
+            return nextConversation;
+          });
         }
       } catch (err) {
-        setError("Failed to get AI response");
+        if (!(err instanceof RequestFailure && err.kind === "cancelled")) {
+          setError(formatRequestFailure(err));
+        }
       } finally {
         if (abortControllerRef.current === controller) {
           abortControllerRef.current = null;
@@ -1041,7 +1182,7 @@ export function useAudioOverlay() {
 
       const previousMessages = buildConversationHistory();
 
-      // Q&A mode: manual input with full conversation history
+      // Q&A mode: manual input with provider-budgeted recent history.
       await processWithAI(
         trimmed,
         DEFAULT_SYSTEM_PROMPT,
@@ -1067,13 +1208,15 @@ export function useAudioOverlay() {
 
       // Set up conversation
       const conversationId = generateConversationId("sysaudio");
-      setConversation({
+      const newConversation = {
         id: conversationId,
         title: "",
         messages: [],
         createdAt: 0,
         updatedAt: 0,
-      });
+      };
+      conversationRef.current = newConversation;
+      setConversation(newConversation);
 
       setCapturing(true);
       setIsPopoverOpen(true);
@@ -1102,24 +1245,35 @@ export function useAudioOverlay() {
       });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
+      setCapturing(false);
+      setIsContinuousMode(false);
+      setIsRecordingInContinuousMode(false);
       setError(errorMessage);
       setIsPopoverOpen(true);
     }
   }, [vadConfig, selectedAudioDevices.output, includeMicrophone, selectedAudioDevices.input]);
 
   const stopCapture = useCallback(async () => {
+    // Cancel local work first; stopping the UI must not depend on the native
+    // capture command succeeding.
+    meetingQueueRef.current?.cancelPending();
+    for (const controller of meetingRequestControllersRef.current) {
+      controller.abort();
+    }
+    meetingRequestControllersRef.current.clear();
+    aiQueueGenerationRef.current += 1;
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    lastSpeechEventRef.current = { fingerprint: "", receivedAt: 0 };
+
+    let stopError = "";
     try {
-      // Abort the active request and invalidate requests waiting in the queue.
-      aiQueueGenerationRef.current += 1;
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-        abortControllerRef.current = null;
-      }
-
-      // Stop the audio capture
       await invoke<string>("stop_system_audio_capture");
-
-      // Reset ALL states
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      stopError = `Failed to stop native capture: ${errorMessage}`;
+      console.error("Stop capture error:", err);
+    } finally {
       setCapturing(false);
       setIsProcessing(false);
       setIsAIProcessing(false);
@@ -1128,11 +1282,8 @@ export function useAudioOverlay() {
       setRecordingProgress(0);
       setLastTranscription("");
       setLastAIResponse("");
-      setError("");
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      setError(`Failed to stop capture: ${errorMessage}`);
-      console.error("Stop capture error:", err);
+      setError(stopError);
+      setNotice("");
     }
   }, []);
 
@@ -1244,6 +1395,11 @@ export function useAudioOverlay() {
 
   useEffect(() => {
     return () => {
+      meetingQueueRef.current?.cancelPending("Meeting overlay closed");
+      for (const controller of meetingRequestControllersRef.current) {
+        controller.abort();
+      }
+      meetingRequestControllersRef.current.clear();
       aiQueueGenerationRef.current += 1;
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
@@ -1306,16 +1462,28 @@ export function useAudioOverlay() {
   ]);
 
   const startNewConversation = useCallback(() => {
-    setConversation({
+    meetingQueueRef.current?.cancelPending("New conversation started");
+    for (const controller of meetingRequestControllersRef.current) {
+      controller.abort();
+    }
+    meetingRequestControllersRef.current.clear();
+    aiQueueGenerationRef.current += 1;
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+
+    const newConversation = {
       id: generateConversationId("sysaudio"),
       title: "",
       messages: [],
       createdAt: 0,
       updatedAt: 0,
-    });
+    };
+    conversationRef.current = newConversation;
+    setConversation(newConversation);
     setLastTranscription("");
     setLastAIResponse("");
     setError("");
+    setNotice("");
     setSetupRequired(false);
     setIsProcessing(false);
     setIsAIProcessing(false);
@@ -1452,6 +1620,8 @@ export function useAudioOverlay() {
     lastTranscription,
     lastAIResponse,
     error,
+    notice,
+    queueDepth,
     setupRequired,
     startCapture,
     stopCapture,
