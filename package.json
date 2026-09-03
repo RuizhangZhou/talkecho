@@ -39,7 +39,8 @@
     "test": "vitest run",
     "preview": "vite preview",
     "tauri": "tauri",
-    "bump": "node scripts/bump-version.cjs"
+    "bump": "node scripts/bump-version.cjs",
+    "release": "node scripts/release.cjs"
   },
   "dependencies": {
     "@bany/curl-to-json": "^1.2.8",
