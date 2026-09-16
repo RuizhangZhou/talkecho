@@ -20,12 +20,12 @@ const DICTATION_WINDOW_HEIGHT: f64 = 140.0;
 #[cfg(target_os = "windows")]
 mod windows_impl {
     use super::*;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::OnceLock;
 
     use enigo::{Enigo, Keyboard, Settings as EnigoSettings};
     use serde::Serialize;
-    use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+    use tauri::{webview::PageLoadEvent, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
     use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
     use windows::Win32::UI::WindowsAndMessaging::{
         CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage,
@@ -37,6 +37,7 @@ mod windows_impl {
 
     static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
     static DICTATION_ACTIVE: AtomicBool = AtomicBool::new(false);
+    static DICTATION_SEQUENCE: AtomicU64 = AtomicU64::new(0);
     static RCTRL_HELD: AtomicBool = AtomicBool::new(false);
 
     fn right_ctrl_transition(held: bool, msg: u32) -> (bool, bool) {
@@ -48,8 +49,9 @@ mod windows_impl {
     }
 
     #[derive(Clone, Serialize)]
-    struct DictationTogglePayload {
+    pub struct DictationTogglePayload {
         active: bool,
+        sequence: u64,
     }
 
     unsafe extern "system" fn keyboard_hook_proc(
@@ -128,10 +130,14 @@ mod windows_impl {
 
     fn toggle_dictation() {
         let active = !DICTATION_ACTIVE.fetch_xor(true, Ordering::SeqCst);
-        eprintln!("[dictation] toggle -> active={active}");
+        let sequence = DICTATION_SEQUENCE.fetch_add(1, Ordering::SeqCst) + 1;
+        eprintln!("[dictation] toggle -> active={active} sequence={sequence}");
         match APP_HANDLE.get() {
             Some(app) => {
-                if let Err(e) = app.emit("dictation://toggle", DictationTogglePayload { active }) {
+                if let Err(e) = app.emit(
+                    "dictation://toggle",
+                    DictationTogglePayload { active, sequence },
+                ) {
                     eprintln!("[dictation] failed to emit toggle event: {e}");
                 }
             }
@@ -203,8 +209,25 @@ mod windows_impl {
         .focused(false)
         .shadow(false)
         .visible(true)
+        .on_page_load(|window, payload| {
+            // Windows needs the WebView to be initially visible so its JS is
+            // initialized. Once loading finishes, hide the parked preload
+            // window unless dictation was activated during startup.
+            if matches!(payload.event(), PageLoadEvent::Finished)
+                && !DICTATION_ACTIVE.load(Ordering::SeqCst)
+            {
+                let _ = window.hide();
+            }
+        })
         .build()?;
         Ok(())
+    }
+
+    pub fn get_state() -> DictationTogglePayload {
+        DictationTogglePayload {
+            active: DICTATION_ACTIVE.load(Ordering::SeqCst),
+            sequence: DICTATION_SEQUENCE.load(Ordering::SeqCst),
+        }
     }
 
     /// Creates the dictation window (parked off-screen) at app startup if it
@@ -266,6 +289,12 @@ mod windows_impl {
 mod stub_impl {
     use super::*;
 
+    #[derive(serde::Serialize)]
+    pub struct DictationTogglePayload {
+        active: bool,
+        sequence: u64,
+    }
+
     const UNSUPPORTED: &str = "Dictation hotkey/injection is currently only implemented on Windows";
 
     pub fn start_hotkey_listener(_app: &AppHandle) {
@@ -284,6 +313,13 @@ mod stub_impl {
 
     pub fn hide_dictation_window(_app: AppHandle) -> Result<(), String> {
         Err(UNSUPPORTED.to_string())
+    }
+
+    pub fn get_state() -> DictationTogglePayload {
+        DictationTogglePayload {
+            active: false,
+            sequence: 0,
+        }
     }
 }
 
@@ -316,6 +352,11 @@ pub fn show_dictation_window(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn hide_dictation_window(app: AppHandle) -> Result<(), String> {
     platform::hide_dictation_window(app)
+}
+
+#[tauri::command]
+pub fn get_dictation_state() -> impl serde::Serialize {
+    platform::get_state()
 }
 
 // TEMPORARY DEBUG: lets the dictation window's webview (which has no visible

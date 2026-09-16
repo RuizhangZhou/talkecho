@@ -52,6 +52,7 @@ export function useDictation() {
   const chunksRef = useRef<Float32Array[]>([]);
   const sampleRateRef = useRef<number>(RECORDER_SAMPLE_RATE);
   const dictationActiveRef = useRef(false);
+  const dictationSequenceRef = useRef(-1);
   const recordingRequestIdRef = useRef(0);
   const startingRequestRef = useRef<number | null>(null);
 
@@ -266,24 +267,52 @@ export function useDictation() {
     let unlisten: (() => void) | undefined;
 
     const register = async () => {
-      const registeredUnlisten = await listen<{ active: boolean }>(
+      const applyState = (active: boolean, sequence: number) => {
+        if (sequence < dictationSequenceRef.current) {
+          debugLog(
+            `useDictation: ignored stale state active=${active} sequence=${sequence}`
+          );
+          return;
+        }
+
+        if (
+          sequence === dictationSequenceRef.current &&
+          dictationActiveRef.current === active
+        ) {
+          return;
+        }
+
+        dictationSequenceRef.current = sequence;
+        if (dictationActiveRef.current === active) {
+          // Initial inactive state: the preload window has finished loading
+          // and can now be hidden without preventing its JS listener from
+          // being initialized.
+          if (!active) {
+            invoke("hide_dictation_window").catch(() => {});
+          }
+          return;
+        }
+
+        dictationActiveRef.current = active;
+        if (active) {
+          invoke("show_dictation_window").catch(() => {});
+          startRecordingRef.current();
+        } else {
+          stopRecordingAndProcessRef.current();
+        }
+      };
+
+      const registeredUnlisten = await listen<{
+        active: boolean;
+        sequence: number;
+      }>(
         "dictation://toggle",
         (event) => {
-          const { active } = event.payload;
-          debugLog(`useDictation: received toggle active=${active}`);
-
-          if (dictationActiveRef.current === active) {
-            debugLog(`useDictation: ignored duplicate active=${active}`);
-            return;
-          }
-          dictationActiveRef.current = active;
-
-          if (active) {
-            invoke("show_dictation_window").catch(() => {});
-            startRecordingRef.current();
-          } else {
-            stopRecordingAndProcessRef.current();
-          }
+          const { active, sequence } = event.payload;
+          debugLog(
+            `useDictation: received toggle active=${active} sequence=${sequence}`
+          );
+          applyState(active, sequence);
         }
       );
 
@@ -292,6 +321,16 @@ export function useDictation() {
         return;
       }
       unlisten = registeredUnlisten;
+
+      const currentState = await invoke<{ active: boolean; sequence: number }>(
+        "get_dictation_state"
+      );
+      if (!disposed) {
+        debugLog(
+          `useDictation: synchronized active=${currentState.active} sequence=${currentState.sequence}`
+        );
+        applyState(currentState.active, currentState.sequence);
+      }
     };
 
     register().catch((err) => {

@@ -119,6 +119,7 @@ pub fn run() {
             dictation::inject_text,
             dictation::show_dictation_window,
             dictation::hide_dictation_window,
+            dictation::get_dictation_state,
             dictation::dictation_debug_log,
         ])
         .setup(|app| {
