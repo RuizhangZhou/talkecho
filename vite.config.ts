@@ -13,30 +13,13 @@ export default defineConfig(async () => ({
       "@": path.resolve(__dirname, "./src"),
     },
   },
-  // Build optimizations
+  // Keep Rollup's automatic chunking. Manually separating React from UI
+  // libraries can create a circular vendor dependency where the React chunk
+  // imports a UI chunk that itself imports React. WebView2 then evaluates
+  // createContext before React is initialized and every production window is
+  // left blank.
   build: {
-    chunkSizeWarningLimit: 1000, // Increase limit to 1MB
-    rollupOptions: {
-      output: {
-        manualChunks: {
-          // Core React libraries
-          'react-vendor': ['react', 'react-dom', 'react-router-dom'],
-          // UI components
-          'ui-vendor': ['lucide-react', 'recharts'],
-          // Markdown rendering
-          'markdown-vendor': [
-            'react-markdown',
-            'remark-gfm',
-            'remark-math',
-            'rehype-raw',
-            'rehype-sanitize',
-            'rehype-katex',
-          ],
-          // Syntax highlighting (loaded dynamically but still chunked separately)
-          'shiki-vendor': ['shiki'],
-        },
-      },
-    },
+    chunkSizeWarningLimit: 1000,
   },
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
