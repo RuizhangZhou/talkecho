@@ -353,8 +353,10 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       }
       const windowLabel = currentWindow.label;
 
-      if (windowLabel === "dashboard") {
-        // For dashboard, always use default cursor
+      if (windowLabel === "dashboard" || windowLabel === "dictation") {
+        // Dashboard and dictation are interactive windows. Dictation does not
+        // render the custom cursor component used by the compact overlay, so
+        // inheriting `cursor: none` there makes a working pointer invisible.
         document.documentElement.style.setProperty("--cursor-type", "default");
         return;
       }
