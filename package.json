@@ -40,7 +40,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "bump": "node scripts/bump-version.cjs",
-    "release": "node scripts/release.cjs"
+    "release": "node scripts/release.cjs",
+    "sign:local-windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sign-local-windows-artifacts.ps1"
   },
   "dependencies": {
     "@bany/curl-to-json": "^1.2.8",
