@@ -206,6 +206,7 @@ mod windows_impl {
         .always_on_top(true)
         .skip_taskbar(true)
         .visible_on_all_workspaces(true)
+        .focusable(true)
         .focused(false)
         .shadow(false)
         .visible(true)
@@ -270,6 +271,12 @@ mod windows_impl {
                 window.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x, y }));
         }
 
+        // Transparent windows can inherit click-through state from a previous
+        // overlay configuration on Windows. Dictation must remain mouse
+        // interactive so users can copy or dismiss its result, while avoiding
+        // an explicit focus change that would steal the target text field.
+        let _ = window.set_ignore_cursor_events(false);
+        let _ = window.set_focusable(true);
         window.show().map_err(|e| e.to_string())
     }
 
