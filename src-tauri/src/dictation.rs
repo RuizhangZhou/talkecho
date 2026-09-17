@@ -33,7 +33,11 @@ mod windows_impl {
         WM_SYSKEYDOWN, WM_SYSKEYUP,
     };
 
+    const VK_CONTROL: u32 = 0x11;
     const VK_RCONTROL: u32 = 0xA3;
+    // Some keyboard drivers report Right Ctrl as generic Ctrl with this flag
+    // rather than using VK_RCONTROL.
+    const LLKHF_EXTENDED: u32 = 0x01;
 
     static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
     static DICTATION_ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -46,6 +50,10 @@ mod windows_impl {
             WM_KEYUP | WM_SYSKEYUP => (false, false),
             _ => (held, false),
         }
+    }
+
+    fn is_right_ctrl(vk_code: u32, flags: u32) -> bool {
+        vk_code == VK_RCONTROL || (vk_code == VK_CONTROL && flags & LLKHF_EXTENDED != 0)
     }
 
     #[derive(Clone, Serialize)]
@@ -64,14 +72,14 @@ mod windows_impl {
             let info = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
 
             // TEMPORARY DEBUG: log Right Ctrl events while the feature is in beta.
-            if info.vkCode == VK_RCONTROL {
+            if is_right_ctrl(info.vkCode, info.flags.0) {
                 eprintln!(
-                    "[dictation] hook saw vkCode=0x{:X} msg=0x{:X}",
-                    info.vkCode, msg
+                    "[dictation] hook saw Right Ctrl vkCode=0x{:X} flags=0x{:X} msg=0x{:X}",
+                    info.vkCode, info.flags.0, msg
                 );
             }
 
-            if info.vkCode == VK_RCONTROL {
+            if is_right_ctrl(info.vkCode, info.flags.0) {
                 let held = RCTRL_HELD.load(Ordering::SeqCst);
                 let (next_held, should_toggle) = right_ctrl_transition(held, msg);
                 RCTRL_HELD.store(next_held, Ordering::SeqCst);
@@ -125,6 +133,16 @@ mod windows_impl {
             let (held, toggle) = right_ctrl_transition(held, WM_SYSKEYDOWN);
             assert!(held);
             assert!(toggle);
+        }
+
+        #[test]
+        fn recognizes_both_windows_right_ctrl_representations() {
+            assert!(is_right_ctrl(VK_RCONTROL, 0));
+            assert!(is_right_ctrl(VK_CONTROL, LLKHF_EXTENDED));
+            assert!(
+                !is_right_ctrl(VK_CONTROL, 0),
+                "Left Ctrl must remain unused"
+            );
         }
     }
 
