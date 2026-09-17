@@ -1,9 +1,12 @@
 import { Check, Copy, Loader2, Mic, TriangleAlert, X } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { useState } from "react";
 import { useDictation } from "@/hooks";
 import { useCopyToClipboard } from "@/hooks";
 import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
+
+const COPY_CLOSE_DELAY_MS = 800;
 
 const STATUS_LABEL: Record<string, string> = {
   idle: "Press Right Ctrl to dictate",
@@ -23,13 +26,19 @@ const STATUS_LABEL: Record<string, string> = {
 const Dictation = () => {
   const { status, resultText, errorText, injected } = useDictation();
   const { isCopied, handleCopy } = useCopyToClipboard({ text: resultText });
+  const [isClosingAfterCopy, setIsClosingAfterCopy] = useState(false);
 
   const isBusy = status === "recording" || status === "transcribing" || status === "cleaning";
-  const handleClose = () => invoke("hide_dictation_window").catch(() => {});
+  const handleClose = async () => {
+    await invoke("hide_dictation_window").catch(() => {});
+  };
   const handleCopyAndClose = async () => {
-    if (await handleCopy()) {
-      handleClose();
-    }
+    if (isClosingAfterCopy || !(await handleCopy())) return;
+
+    setIsClosingAfterCopy(true);
+    await new Promise((resolve) => setTimeout(resolve, COPY_CLOSE_DELAY_MS));
+    await handleClose();
+    setIsClosingAfterCopy(false);
   };
 
   return (
@@ -50,7 +59,11 @@ const Dictation = () => {
           {status === "error" && <TriangleAlert className="h-3.5 w-3.5 text-destructive" />}
 
           <span className="flex-1 text-muted-foreground truncate">
-            {status === "error" && errorText ? errorText : STATUS_LABEL[status]}
+            {status === "error" && errorText
+              ? errorText
+              : isCopied
+                ? "Copied to clipboard"
+                : STATUS_LABEL[status]}
           </span>
 
           {!isBusy && (
@@ -80,13 +93,20 @@ const Dictation = () => {
             <Button
               size="sm"
               variant="secondary"
-              className="shrink-0 h-7 px-2"
+              className="h-7 shrink-0 gap-1.5 px-2"
               onClick={handleCopyAndClose}
+              disabled={isClosingAfterCopy}
             >
               {isCopied ? (
-                <Check className="h-3.5 w-3.5" />
+                <>
+                  <Check className="h-3.5 w-3.5" />
+                  <span>Copied</span>
+                </>
               ) : (
-                <Copy className="h-3.5 w-3.5" />
+                <>
+                  <Copy className="h-3.5 w-3.5" />
+                  <span>Copy</span>
+                </>
               )}
             </Button>
           </div>

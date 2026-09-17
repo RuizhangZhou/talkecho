@@ -262,11 +262,12 @@ mod windows_impl {
 
         if let Ok(Some(monitor)) = window.primary_monitor() {
             let size = monitor.size();
+            let monitor_position = monitor.position();
             let scale = monitor.scale_factor();
             let win_w = (DICTATION_WINDOW_WIDTH * scale) as i32;
             let win_h = (DICTATION_WINDOW_HEIGHT * scale) as i32;
-            let x = (size.width as i32 - win_w) / 2;
-            let y = size.height as i32 - win_h - (40.0 * scale) as i32;
+            let x = monitor_position.x + (size.width as i32 - win_w) / 2;
+            let y = monitor_position.y + size.height as i32 - win_h - (40.0 * scale) as i32;
             let _ =
                 window.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x, y }));
         }

@@ -1,4 +1,4 @@
-import { Button } from "@/components";
+import { Button, ScrollArea } from "@/components";
 import { cn } from "@/lib/utils";
 import { useLocation, useNavigate } from "react-router-dom";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -12,7 +12,7 @@ export const Sidebar = () => {
   const navigate = useNavigate();
   const activeRoute = useLocation().pathname;
   return (
-    <aside className="flex w-56 flex-col select-none pt-2">
+    <aside className="flex h-full w-48 shrink-0 flex-col overflow-hidden select-none pt-2 lg:w-56">
       {/* Logo */}
       <div
         onClick={() => navigate("/dashboard")}
@@ -35,65 +35,69 @@ export const Sidebar = () => {
         </div>
       </div>
 
-      {/* Navigation */}
-      <nav className="flex-1 space-y-1 px-3 py-6">
-        {menu.map((item, index) => (
-          <button
-            onClick={() => navigate(item.href)}
-            key={`${item.label}-${index}`}
-            className={cn(
-              "flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-xs lg:text-sm text-sidebar-foreground/70 transition-all duration-300 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-              activeRoute.includes(item.href)
-                ? "font-medium bg-sidebar-accent text-sidebar-accent-foreground"
-                : ""
-            )}
-          >
-            <div className="flex items-center gap-3">
-              <item.icon className="size-3 lg:size-4 transition-all duration-300" />
-              {item.label}
-            </div>
-            {item.count ? (
-              <span className="flex size-5 items-center justify-center rounded-md bg-muted text-xs font-semibold text-muted-foreground">
-                {item.count}
-              </span>
-            ) : null}
-          </button>
-        ))}
-      </nav>
+      <ScrollArea className="min-h-0 flex-1" scrollbars="vertical" type="always">
+        <div className="flex min-h-full flex-col px-3 pb-3 pr-6">
+          {/* Navigation */}
+          <nav className="flex-1 space-y-1 py-6">
+            {menu.map((item, index) => (
+              <button
+                onClick={() => navigate(item.href)}
+                key={`${item.label}-${index}`}
+                className={cn(
+                  "flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-xs lg:text-sm text-sidebar-foreground/70 transition-all duration-300 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                  activeRoute.includes(item.href)
+                    ? "font-medium bg-sidebar-accent text-sidebar-accent-foreground"
+                    : ""
+                )}
+              >
+                <div className="flex min-w-0 items-center gap-3">
+                  <item.icon className="size-3 shrink-0 lg:size-4 transition-all duration-300" />
+                  <span className="truncate">{item.label}</span>
+                </div>
+                {item.count ? (
+                  <span className="flex size-5 shrink-0 items-center justify-center rounded-md bg-muted text-xs font-semibold text-muted-foreground">
+                    {item.count}
+                  </span>
+                ) : null}
+              </button>
+            ))}
+          </nav>
 
-      <div className="flex flex-col space-y-1 px-3  pb-3">
-        <div className="flex flex-row justify-evenly items-center gap-2 mb-3">
-          {footerLinks.map((item, index) => (
-            <Button
-              key={`${item.title}-${index}`}
-              title={item.title}
-              size="sm"
-              variant="outline"
-              onClick={() => openUrl(item.link)}
-            >
-              <item.icon className="size-3 lg:size-4 transition-all duration-300" />
-            </Button>
-          ))}
+          <div className="flex flex-col space-y-1">
+            <div className="mb-3 flex flex-row items-center justify-evenly gap-2">
+              {footerLinks.map((item, index) => (
+                <Button
+                  key={`${item.title}-${index}`}
+                  title={item.title}
+                  size="sm"
+                  variant="outline"
+                  onClick={() => openUrl(item.link)}
+                >
+                  <item.icon className="size-3 lg:size-4 transition-all duration-300" />
+                </Button>
+              ))}
+            </div>
+
+            {footerItems.map((item, index) => (
+              <a
+                href={item.href}
+                onClick={item.action}
+                target="_blank"
+                rel="noopener noreferrer"
+                key={`${item.label}-${index}`}
+                className={cn(
+                  "flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-xs lg:text-sm text-sidebar-foreground/70 transition-all duration-300 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                )}
+              >
+                <div className="flex min-w-0 items-center gap-3">
+                  <item.icon className="size-3 shrink-0 lg:size-4 transition-all duration-300" />
+                  <span className="truncate">{item.label}</span>
+                </div>
+              </a>
+            ))}
+          </div>
         </div>
-
-        {footerItems.map((item, index) => (
-          <a
-            href={item.href}
-            onClick={item.action}
-            target="_blank"
-            rel="noopener noreferrer"
-            key={`${item.label}-${index}`}
-            className={cn(
-              "flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-xs lg:text-sm text-sidebar-foreground/70 transition-all duration-300 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-            )}
-          >
-            <div className="flex items-center gap-3">
-              <item.icon className="size-3 lg:size-4 transition-all duration-300" />
-              {item.label}
-            </div>
-          </a>
-        ))}
-      </div>
+      </ScrollArea>
     </aside>
   );
 };

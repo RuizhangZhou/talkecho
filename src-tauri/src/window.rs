@@ -36,15 +36,17 @@ pub fn position_window_top_center(
     // Get the primary monitor
     if let Some(monitor) = window.primary_monitor()? {
         let monitor_size = monitor.size();
+        let monitor_position = monitor.position();
         let window_size = window.outer_size()?;
 
         // Calculate center X position
-        let center_x = (monitor_size.width as i32 - window_size.width as i32) / 2;
+        let center_x = monitor_position.x
+            + (monitor_size.width as i32 - window_size.width as i32) / 2;
 
         // Set the window position
         window.set_position(tauri::Position::Physical(tauri::PhysicalPosition {
             x: center_x,
-            y: y_offset,
+            y: monitor_position.y + y_offset,
         }))?;
     }
 
@@ -56,10 +58,13 @@ pub fn position_window_top_center(
 pub fn center_window_completely(window: &WebviewWindow) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(monitor) = window.primary_monitor()? {
         let monitor_size = monitor.size();
+        let monitor_position = monitor.position();
         let window_size = window.outer_size()?;
 
-        let center_x = (monitor_size.width as i32 - window_size.width as i32) / 2;
-        let center_y = (monitor_size.height as i32 - window_size.height as i32) / 2;
+        let center_x = monitor_position.x
+            + (monitor_size.width as i32 - window_size.width as i32) / 2;
+        let center_y = monitor_position.y
+            + (monitor_size.height as i32 - window_size.height as i32) / 2;
 
         window.set_position(tauri::Position::Physical(tauri::PhysicalPosition {
             x: center_x,
@@ -201,7 +206,10 @@ pub fn create_dashboard_window<R: Runtime>(
         .decorations(true)
         .inner_size(1000.0, 700.0)
         .min_inner_size(900.0, 650.0)
-        .content_protected(true)
+        // Keep meeting content out of screenshots in shipped builds, but
+        // allow screen captures while developing so UI work and bug reports
+        // can be verified with normal OS capture tools.
+        .content_protected(!cfg!(debug_assertions))
         .visible(true)
         .resizable(true);
 

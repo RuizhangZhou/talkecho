@@ -17,8 +17,8 @@ export const PageLayout = ({
   isMainTitle?: boolean;
 }) => {
   return (
-    <div className="flex flex-1 flex-col">
-      <header className="pt-8">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <header className="shrink-0 pt-8">
         <Header
           isMainTitle={isMainTitle}
           showBorder={true}
@@ -29,8 +29,12 @@ export const PageLayout = ({
         />
       </header>
 
-      <ScrollArea className="h-[calc(100vh-5rem)] pr-6" scrollbars="both">
-        <div className="flex flex-col gap-6 pb-12 pt-4 px-1">
+      <ScrollArea
+        className="min-h-0 min-w-0 flex-1 pr-6"
+        scrollbars="both"
+        type="always"
+      >
+        <div className="flex min-w-0 flex-col gap-6 px-1 pb-12 pt-4">
           <Promote />
           {children}
         </div>
