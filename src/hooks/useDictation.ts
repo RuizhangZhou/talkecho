@@ -163,7 +163,7 @@ export function useDictation() {
     if (totalLength === 0) {
       debugLog("stopRecording: no audio captured, returning to idle");
       setStatus("idle");
-      invoke("hide_dictation_window").catch(() => {});
+      invoke("hide_dictation_window", { expectedSequence: dictationSequenceRef.current }).catch(() => {});
       return;
     }
 
@@ -265,6 +265,7 @@ export function useDictation() {
     debugLog("useDictation: mounted, registering toggle listener");
     let disposed = false;
     let unlisten: (() => void) | undefined;
+    let removeVisibilityListener: (() => void) | undefined;
 
     const register = async () => {
       const applyState = (active: boolean, sequence: number) => {
@@ -288,7 +289,7 @@ export function useDictation() {
           // and can now be hidden without preventing its JS listener from
           // being initialized.
           if (!active) {
-            invoke("hide_dictation_window").catch(() => {});
+            invoke("hide_dictation_window", { expectedSequence: sequence }).catch(() => {});
           }
           return;
         }
@@ -322,15 +323,27 @@ export function useDictation() {
       }
       unlisten = registeredUnlisten;
 
-      const currentState = await invoke<{ active: boolean; sequence: number }>(
-        "get_dictation_state"
-      );
-      if (!disposed) {
-        debugLog(
-          `useDictation: synchronized active=${currentState.active} sequence=${currentState.sequence}`
+      const synchronize = async () => {
+        const currentState = await invoke<{ active: boolean; sequence: number }>(
+          "get_dictation_state"
         );
-        applyState(currentState.active, currentState.sequence);
-      }
+        if (!disposed) {
+          debugLog(
+            `useDictation: synchronized active=${currentState.active} sequence=${currentState.sequence}`
+          );
+          applyState(currentState.active, currentState.sequence);
+        }
+      };
+      // Native hotkey handling wakes the window even if WebView event delivery
+      // was suspended. Reconcile on visibility restoration without polling.
+      const onVisible = () => {
+        if (document.visibilityState === "visible") {
+          synchronize().catch((error) => debugLog(`useDictation: sync failed: ${error}`));
+        }
+      };
+      document.addEventListener("visibilitychange", onVisible);
+      removeVisibilityListener = () => document.removeEventListener("visibilitychange", onVisible);
+      await synchronize();
     };
 
     register().catch((err) => {
@@ -347,9 +360,11 @@ export function useDictation() {
       recordingRequestIdRef.current += 1;
       startingRequestRef.current = null;
       unlisten?.();
+      removeVisibilityListener?.();
       teardownRecording();
     };
   }, [teardownRecording]);
 
-  return { status, resultText, errorText, injected };
+  const getSequence = useCallback(() => dictationSequenceRef.current, []);
+  return { status, resultText, errorText, injected, getSequence };
 }

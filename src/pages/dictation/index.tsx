@@ -24,20 +24,21 @@ const STATUS_LABEL: Record<string, string> = {
  * via Rust, this UI is the fallback/confirmation surface.
  */
 const Dictation = () => {
-  const { status, resultText, errorText, injected } = useDictation();
+  const { status, resultText, errorText, injected, getSequence } = useDictation();
   const { isCopied, handleCopy } = useCopyToClipboard({ text: resultText });
   const [isClosingAfterCopy, setIsClosingAfterCopy] = useState(false);
 
   const isBusy = status === "recording" || status === "transcribing" || status === "cleaning";
   const handleClose = async () => {
-    await invoke("hide_dictation_window").catch(() => {});
+    await invoke("hide_dictation_window", { expectedSequence: getSequence() }).catch(() => {});
   };
   const handleCopyAndClose = async () => {
+    const sequence = getSequence();
     if (isClosingAfterCopy || !(await handleCopy())) return;
 
     setIsClosingAfterCopy(true);
     await new Promise((resolve) => setTimeout(resolve, COPY_CLOSE_DELAY_MS));
-    await handleClose();
+    await invoke("hide_dictation_window", { expectedSequence: sequence }).catch(() => {});
     setIsClosingAfterCopy(false);
   };
 

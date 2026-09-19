@@ -20,17 +20,18 @@ const DICTATION_WINDOW_HEIGHT: f64 = 140.0;
 #[cfg(target_os = "windows")]
 mod windows_impl {
     use super::*;
+    use std::io::Write;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-    use std::sync::OnceLock;
+    use std::sync::{mpsc, Mutex, OnceLock};
 
     use enigo::{Enigo, Keyboard, Settings as EnigoSettings};
     use serde::Serialize;
-    use tauri::{webview::PageLoadEvent, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+    use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
     use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
     use windows::Win32::UI::WindowsAndMessaging::{
-        CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage,
-        UnhookWindowsHookEx, HHOOK, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP,
-        WM_SYSKEYDOWN, WM_SYSKEYUP,
+        CallNextHookEx, DispatchMessageW, GetMessageW, KillTimer, SetTimer, SetWindowsHookExW,
+        TranslateMessage, UnhookWindowsHookEx, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN,
+        WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_TIMER,
     };
 
     const VK_CONTROL: u32 = 0x11;
@@ -40,9 +41,47 @@ mod windows_impl {
     const LLKHF_EXTENDED: u32 = 0x01;
 
     static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
-    static DICTATION_ACTIVE: AtomicBool = AtomicBool::new(false);
+    // One atomic snapshot: odd sequences are recording, even sequences stopped.
     static DICTATION_SEQUENCE: AtomicU64 = AtomicU64::new(0);
     static RCTRL_HELD: AtomicBool = AtomicBool::new(false);
+    static WORKER: OnceLock<mpsc::Sender<HotkeyWork>> = OnceLock::new();
+    static LOG_LOCK: Mutex<()> = Mutex::new(());
+    const HOOK_REFRESH_MS: u32 = 30_000;
+
+    enum HotkeyWork {
+        Toggle,
+        Diagnostic(String),
+    }
+
+    // Never call this from the keyboard callback: even stderr/file I/O can block.
+    pub fn diagnostic(message: &str) {
+        eprintln!("[dictation] {message}");
+        let Some(app) = APP_HANDLE.get() else { return };
+        let Ok(directory) = app.path().app_log_dir() else {
+            return;
+        };
+        let Ok(_guard) = LOG_LOCK.lock() else { return };
+        if std::fs::create_dir_all(&directory).is_err() {
+            return;
+        }
+        let path = directory.join("dictation.log");
+        if std::fs::metadata(&path).is_ok_and(|meta| meta.len() > 1_048_576) {
+            let backup = directory.join("dictation.previous.log");
+            let _ = std::fs::remove_file(&backup);
+            let _ = std::fs::rename(&path, backup);
+        }
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis();
+            let _ = writeln!(file, "{now} pid={} {message}", std::process::id());
+        }
+    }
 
     fn right_ctrl_transition(held: bool, msg: u32) -> (bool, bool) {
         match msg {
@@ -62,6 +101,19 @@ mod windows_impl {
         sequence: u64,
     }
 
+    impl DictationTogglePayload {
+        fn from_sequence(sequence: u64) -> Self {
+            Self {
+                active: sequence % 2 == 1,
+                sequence,
+            }
+        }
+
+        fn permits_hide(&self, expected_sequence: Option<u64>) -> bool {
+            !self.active && expected_sequence.is_none_or(|sequence| sequence == self.sequence)
+        }
+    }
+
     unsafe extern "system" fn keyboard_hook_proc(
         code: i32,
         wparam: WPARAM,
@@ -71,21 +123,20 @@ mod windows_impl {
             let msg = wparam.0 as u32;
             let info = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
 
-            // TEMPORARY DEBUG: log Right Ctrl events while the feature is in beta.
-            if is_right_ctrl(info.vkCode, info.flags.0) {
-                eprintln!(
-                    "[dictation] hook saw Right Ctrl vkCode=0x{:X} flags=0x{:X} msg=0x{:X}",
-                    info.vkCode, info.flags.0, msg
-                );
-            }
-
             if is_right_ctrl(info.vkCode, info.flags.0) {
                 let held = RCTRL_HELD.load(Ordering::SeqCst);
                 let (next_held, should_toggle) = right_ctrl_transition(held, msg);
                 RCTRL_HELD.store(next_held, Ordering::SeqCst);
 
                 if should_toggle {
-                    toggle_dictation();
+                    // No WebView calls, logging, or window operations on the hook
+                    // thread. Windows silently removes hooks that take too long.
+                    if WORKER
+                        .get()
+                        .is_none_or(|worker| worker.send(HotkeyWork::Toggle).is_err())
+                    {
+                        return CallNextHookEx(None, code, wparam, lparam);
+                    }
                 }
 
                 // Right Ctrl is reserved for TalkEcho while it is running. Do
@@ -144,19 +195,36 @@ mod windows_impl {
                 "Left Ctrl must remain unused"
             );
         }
+
+        #[test]
+        fn delayed_close_cannot_hide_a_new_recording_or_its_result() {
+            assert!(DictationTogglePayload::from_sequence(0).permits_hide(Some(0)));
+            assert!(!DictationTogglePayload::from_sequence(1).permits_hide(Some(0)));
+            assert!(!DictationTogglePayload::from_sequence(1).permits_hide(None));
+            assert!(DictationTogglePayload::from_sequence(2).permits_hide(Some(2)));
+            assert!(!DictationTogglePayload::from_sequence(4).permits_hide(Some(2)));
+        }
     }
 
     fn toggle_dictation() {
-        let active = !DICTATION_ACTIVE.fetch_xor(true, Ordering::SeqCst);
         let sequence = DICTATION_SEQUENCE.fetch_add(1, Ordering::SeqCst) + 1;
-        eprintln!("[dictation] toggle -> active={active} sequence={sequence}");
+        let active = sequence % 2 == 1;
+        diagnostic(&format!("toggle -> active={active} sequence={sequence}"));
         match APP_HANDLE.get() {
             Some(app) => {
-                if let Err(e) = app.emit(
+                // Wake the native window BEFORE relying on its hidden WebView.
+                // Also wakes a minimized/suspended window and recreates a closed one.
+                if active {
+                    if let Err(e) = show_dictation_window(app.clone()) {
+                        diagnostic(&format!("native show failed: {e}"));
+                    }
+                }
+                if let Err(e) = app.emit_to(
+                    DICTATION_WINDOW_LABEL,
                     "dictation://toggle",
                     DictationTogglePayload { active, sequence },
                 ) {
-                    eprintln!("[dictation] failed to emit toggle event: {e}");
+                    diagnostic(&format!("failed to emit toggle event: {e}"));
                 }
             }
             None => eprintln!("[dictation] APP_HANDLE not set yet"),
@@ -167,29 +235,81 @@ mod windows_impl {
     /// with its own message loop (required by `WH_KEYBOARD_LL`).
     pub fn start_hotkey_listener(app: &AppHandle) {
         let _ = APP_HANDLE.set(app.clone());
+        let (sender, receiver) = mpsc::channel();
+        if WORKER.set(sender).is_err() {
+            return;
+        }
+        diagnostic(&format!(
+            "starting version={} debug={}",
+            env!("CARGO_PKG_VERSION"),
+            cfg!(debug_assertions)
+        ));
+
+        // Serial dispatch preserves physical press order. Window creation must
+        // run on the UI thread, never in the low-level hook or its message pump.
+        let app = app.clone();
+        std::thread::spawn(move || {
+            for work in receiver {
+                match work {
+                    HotkeyWork::Toggle => {
+                        if let Err(error) = app.run_on_main_thread(toggle_dictation) {
+                            diagnostic(&format!("hotkey dispatch failed: {error}"));
+                        }
+                    }
+                    HotkeyWork::Diagnostic(message) => diagnostic(&message),
+                }
+            }
+        });
 
         std::thread::spawn(|| unsafe {
-            eprintln!("[dictation] hotkey listener thread starting, installing hook...");
-            let hook: HHOOK =
-                match SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook_proc), None, 0) {
-                    Ok(hook) => {
-                        eprintln!("[dictation] keyboard hook installed successfully");
-                        hook
-                    }
-                    Err(err) => {
-                        eprintln!("[dictation] Failed to install dictation keyboard hook: {err}");
-                        return;
+            let report = |message: String| {
+                if let Some(worker) = WORKER.get() {
+                    let _ = worker.send(HotkeyWork::Diagnostic(message));
+                }
+            };
+            let install =
+                || match SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook_proc), None, 0) {
+                    Ok(hook) => Some(hook),
+                    Err(error) => {
+                        report(format!("hook installation failed: {error}"));
+                        None
                     }
                 };
-
+            let mut hook = install();
+            report(format!("keyboard hook installed={}", hook.is_some()));
+            // Windows provides no notification when it removes a timed-out hook.
+            // Renew twice per minute, including after sleep, and retry failures.
+            // This does NOT poll keys; GetMessage blocks between OS events.
+            let timer = SetTimer(None, 0, HOOK_REFRESH_MS, None);
+            if timer == 0 {
+                report("hook recovery timer failed".into());
+            }
             let mut msg = MSG::default();
-            while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+            loop {
+                let result = GetMessageW(&mut msg, None, 0, 0).0;
+                if result <= 0 {
+                    report(format!("hook message loop exited: {result}"));
+                    break;
+                }
+                if msg.message == WM_TIMER && msg.wParam.0 == timer {
+                    // Install first: if renewal fails, retain the previous hook.
+                    if let Some(next) = install() {
+                        if let Some(previous) = hook.replace(next) {
+                            let _ = UnhookWindowsHookEx(previous);
+                        }
+                        report("keyboard hook renewed".into());
+                    }
+                    continue;
+                }
                 let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
-
-            eprintln!("[dictation] message loop exited, unhooking");
-            let _ = UnhookWindowsHookEx(hook);
+            if timer != 0 {
+                let _ = KillTimer(None, timer);
+            }
+            if let Some(hook) = hook {
+                let _ = UnhookWindowsHookEx(hook);
+            }
         });
     }
 
@@ -228,25 +348,15 @@ mod windows_impl {
         .focused(false)
         .shadow(false)
         .visible(true)
-        .on_page_load(|window, payload| {
-            // Windows needs the WebView to be initially visible so its JS is
-            // initialized. Once loading finishes, hide the parked preload
-            // window unless dictation was activated during startup.
-            if matches!(payload.event(), PageLoadEvent::Finished)
-                && !DICTATION_ACTIVE.load(Ordering::SeqCst)
-            {
-                let _ = window.hide();
-            }
-        })
+        // Do not hide at PageLoadEvent::Finished: React may not have registered
+        // its listener yet. The frontend hides only after state synchronization.
         .build()?;
         Ok(())
     }
 
     pub fn get_state() -> DictationTogglePayload {
-        DictationTogglePayload {
-            active: DICTATION_ACTIVE.load(Ordering::SeqCst),
-            sequence: DICTATION_SEQUENCE.load(Ordering::SeqCst),
-        }
+        let sequence = DICTATION_SEQUENCE.load(Ordering::SeqCst);
+        DictationTogglePayload::from_sequence(sequence)
     }
 
     /// Creates the dictation window (parked off-screen) at app startup if it
@@ -268,7 +378,7 @@ mod windows_impl {
     /// Shows the small floating dictation window, positioned near the
     /// bottom-center of the primary monitor.
     pub fn show_dictation_window(app: AppHandle) -> Result<(), String> {
-        eprintln!("[dictation] show_dictation_window invoked from frontend");
+        diagnostic("show window requested");
         let window = match app.get_webview_window(DICTATION_WINDOW_LABEL) {
             Some(window) => window,
             None => {
@@ -296,10 +406,25 @@ mod windows_impl {
         // an explicit focus change that would steal the target text field.
         let _ = window.set_ignore_cursor_events(false);
         let _ = window.set_focusable(true);
-        window.show().map_err(|e| e.to_string())
+        // Reassert TOPMOST every time the transient HUD is shown. This keeps
+        // it above normal application windows after hide/show, sleep/resume,
+        // and Z-order changes while leaving focus in the user's target app.
+        let _ = window.set_always_on_top(true);
+        window.unminimize().map_err(|e| e.to_string())?;
+        window.show().map_err(|e| e.to_string())?;
+        diagnostic("native window shown");
+        Ok(())
     }
 
-    pub fn hide_dictation_window(app: AppHandle) -> Result<(), String> {
+    pub fn hide_dictation_window(
+        app: AppHandle,
+        expected_sequence: Option<u64>,
+    ) -> Result<(), String> {
+        let state = get_state();
+        if !state.permits_hide(expected_sequence) {
+            diagnostic("ignored stale hide request");
+            return Ok(());
+        }
         if let Some(window) = app.get_webview_window(DICTATION_WINDOW_LABEL) {
             window.hide().map_err(|e| e.to_string())?;
             let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition {
@@ -337,7 +462,10 @@ mod stub_impl {
         Err(UNSUPPORTED.to_string())
     }
 
-    pub fn hide_dictation_window(_app: AppHandle) -> Result<(), String> {
+    pub fn hide_dictation_window(
+        _app: AppHandle,
+        _expected_sequence: Option<u64>,
+    ) -> Result<(), String> {
         Err(UNSUPPORTED.to_string())
     }
 
@@ -376,12 +504,14 @@ pub fn show_dictation_window(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn hide_dictation_window(app: AppHandle) -> Result<(), String> {
-    platform::hide_dictation_window(app)
+pub fn hide_dictation_window(app: AppHandle, expected_sequence: Option<u64>) -> Result<(), String> {
+    platform::hide_dictation_window(app, expected_sequence)
 }
 
 #[tauri::command]
 pub fn get_dictation_state() -> impl serde::Serialize {
+    #[cfg(target_os = "windows")]
+    windows_impl::diagnostic("frontend synchronizing state");
     platform::get_state()
 }
 
@@ -389,5 +519,16 @@ pub fn get_dictation_state() -> impl serde::Serialize {
 // devtools) report progress to the same terminal as the Rust logs.
 #[tauri::command]
 pub fn dictation_debug_log(message: String) {
+    // Persist only lifecycle metadata, never transcripts, prompts or credentials.
+    #[cfg(target_os = "windows")]
+    if message.starts_with("useDictation:")
+        || message == "startRecording: requesting getUserMedia..."
+        || message == "startRecording: getUserMedia resolved"
+        || message == "startRecording: status set to 'recording'"
+    {
+        windows_impl::diagnostic(&format!("frontend: {message}"));
+        return;
+    }
+    #[cfg(debug_assertions)]
     eprintln!("[dictation][js] {message}");
 }
