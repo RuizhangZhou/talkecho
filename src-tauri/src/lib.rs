@@ -5,6 +5,7 @@ mod capture;
 mod db;
 mod dictation;
 mod shortcuts;
+mod tray;
 mod window;
 use std::sync::{Arc, Mutex};
 use tauri::Manager;
@@ -42,9 +43,6 @@ pub fn run() {
         )
         .manage(AudioState::default())
         .manage(CaptureState::default())
-        .manage(shortcuts::WindowVisibility {
-            is_hidden: Mutex::new(false),
-        })
         .manage(shortcuts::RegisteredShortcuts::default())
         .manage(shortcuts::LicenseState::default())
         .manage(shortcuts::MoveWindowState::default())
@@ -121,6 +119,7 @@ pub fn run() {
             dictation::hide_dictation_window,
             dictation::get_dictation_state,
             dictation::dictation_debug_log,
+            tray::set_recording_state,
         ])
         .setup(|app| {
             // Setup main window positioning
@@ -128,12 +127,8 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             init(app.app_handle());
 
+            tray::setup(app)?;
             let app_handle = app.handle();
-            if app_handle.get_webview_window("dashboard").is_none() {
-                if let Err(e) = window::create_dashboard_window_with_close_handler(&app_handle) {
-                    eprintln!("Failed to create dashboard window on startup: {}", e);
-                }
-            }
 
             // Right Ctrl toggles dictation mode (Windows only for now)
             dictation::init_window(&app_handle);

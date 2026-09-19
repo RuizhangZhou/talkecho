@@ -1,6 +1,6 @@
 ﻿#[cfg(target_os = "macos")]
 use tauri::LogicalPosition;
-use tauri::{App, AppHandle, Manager, Runtime, WebviewWindow, WebviewWindowBuilder};
+use tauri::{App, AppHandle, Emitter, Manager, Runtime, WebviewWindow, WebviewWindowBuilder};
 
 // The offset from the top of the screen to the window
 const TOP_OFFSET: i32 = 54;
@@ -152,6 +152,76 @@ pub fn toggle_dashboard(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Shows the compact recording bar and brings it to the foreground.
+///
+/// Hiding this window never stops its webview. That is intentional: global
+/// shortcuts, dictation and any active audio capture must keep running while
+/// TalkEcho is resident in the system tray.
+pub fn show_main_bar<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or("Main window not found")?;
+
+    window
+        .unminimize()
+        .map_err(|e| format!("Failed to restore main window: {e}"))?;
+    window
+        .show()
+        .map_err(|e| format!("Failed to show main window: {e}"))?;
+    window
+        .set_focus()
+        .map_err(|e| format!("Failed to focus main window: {e}"))?;
+    let _ = window.emit("focus-text-input", serde_json::json!({}));
+
+    #[cfg(target_os = "macos")]
+    {
+        use tauri_nspanel::ManagerExt;
+
+        if let Some(panel) = app.get_webview_panel("main") {
+            panel.show();
+        }
+    }
+
+    Ok(())
+}
+
+/// Hides the compact recording bar without destroying the window or stopping
+/// background work.
+pub fn hide_main_bar<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or("Main window not found")?;
+
+    #[cfg(target_os = "macos")]
+    {
+        use tauri_nspanel::ManagerExt;
+
+        if let Some(panel) = app.get_webview_panel("main") {
+            let _ = panel.hide();
+        }
+    }
+
+    window
+        .hide()
+        .map_err(|e| format!("Failed to hide main window: {e}"))
+}
+
+/// Toggles the recording bar using native window visibility, rather than a
+/// frontend-only CSS state. This is shared by the global shortcut and tray.
+pub fn toggle_main_bar<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or("Main window not found")?;
+
+    match window
+        .is_visible()
+        .map_err(|e| format!("Failed to read main window visibility: {e}"))?
+    {
+        true => hide_main_bar(app),
+        false => show_main_bar(app),
+    }
+}
+
 #[tauri::command]
 pub fn move_window(app: tauri::AppHandle, direction: String, step: i32) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
@@ -211,7 +281,10 @@ pub fn create_dashboard_window<R: Runtime>(
         // can be verified with normal OS capture tools.
         .content_protected(!cfg!(debug_assertions))
         .visible(true)
-        .resizable(true);
+        .resizable(true)
+        // The dashboard is reached through the tray or its global shortcut.
+        // It should not claim a permanent taskbar slot on Windows.
+        .skip_taskbar(cfg!(target_os = "windows"));
 
     base_builder.build()
 }

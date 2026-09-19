@@ -9,6 +9,7 @@ import {
 import { SystemAudio, AudioVisualizer } from "./components";
 import { MessageSquareIcon } from "lucide-react";
 import { useApp } from "@/hooks";
+import { useEffect } from "react";
 import { useApp as useAppContext } from "@/contexts";
 import { invoke } from "@tauri-apps/api/core";
 import { ErrorBoundary } from "react-error-boundary";
@@ -19,6 +20,16 @@ const App = () => {
   const { systemAudio } = useApp();
   const { customizable } = useAppContext();
   const platform = getPlatform();
+
+  useEffect(() => {
+    if (platform !== "windows") return;
+
+    invoke("set_recording_state", {
+      recording: Boolean(systemAudio?.capturing),
+    }).catch((error) => {
+      console.error("Failed to update TalkEcho tray status:", error);
+    });
+  }, [platform, systemAudio?.capturing]);
 
   const openDashboard = async () => {
     try {
