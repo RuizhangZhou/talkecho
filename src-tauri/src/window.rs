@@ -88,6 +88,30 @@ pub fn set_window_height(window: tauri::WebviewWindow, height: u32) -> Result<()
     Ok(())
 }
 
+/// Builds the dashboard window from a background thread.
+///
+/// On Windows `WebviewWindowBuilder::build` deadlocks when it is called from
+/// the main thread while the event loop is running, which is where synchronous
+/// commands, tray menu callbacks and global shortcut handlers all run. The
+/// native window still appears, but its WebView2 controller never finishes
+/// initializing and never navigates, so the dashboard stays permanently blank.
+/// Building from another thread leaves the event loop free to finish the job.
+pub fn spawn_dashboard_creation<R: Runtime>(app: &AppHandle<R>) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        if app.get_webview_window("dashboard").is_some() {
+            return;
+        }
+
+        match create_dashboard_window_with_close_handler(&app) {
+            Ok(window) => {
+                let _ = window.set_focus();
+            }
+            Err(e) => eprintln!("Failed to create dashboard window: {}", e),
+        }
+    });
+}
+
 #[tauri::command]
 pub fn open_dashboard(app: tauri::AppHandle) -> Result<(), String> {
     // Check if dashboard window already exists
@@ -105,14 +129,12 @@ pub fn open_dashboard(app: tauri::AppHandle) -> Result<(), String> {
             }
             Err(_) => {
                 // Window reference is stale, recreate it
-                create_dashboard_window_with_close_handler(&app)
-                    .map_err(|e| format!("Failed to recreate dashboard window: {}", e))?;
+                spawn_dashboard_creation(&app);
             }
         }
     } else {
         // Window doesn't exist, create it with platform-aware defaults
-        create_dashboard_window_with_close_handler(&app)
-            .map_err(|e| format!("Failed to create dashboard window: {}", e))?;
+        spawn_dashboard_creation(&app);
     }
 
     Ok(())
@@ -139,14 +161,12 @@ pub fn toggle_dashboard(app: tauri::AppHandle) -> Result<(), String> {
             }
             Err(_) => {
                 // Window reference is stale, recreate it
-                create_dashboard_window_with_close_handler(&app)
-                    .map_err(|e| format!("Failed to recreate dashboard window: {}", e))?;
+                spawn_dashboard_creation(&app);
             }
         }
     } else {
         // Window doesn't exist, create it with close handler
-        create_dashboard_window_with_close_handler(&app)
-            .map_err(|e| format!("Failed to create dashboard window: {}", e))?;
+        spawn_dashboard_creation(&app);
     }
 
     Ok(())

@@ -7,7 +7,7 @@ use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
 use tokio::time::{sleep, Duration};
 
-use crate::window::{self, create_dashboard_window_with_close_handler};
+use crate::window;
 // State for registered shortcuts
 pub struct RegisteredShortcuts {
     pub shortcuts: Mutex<HashMap<String, String>>, // action_id -> shortcut_key
@@ -522,11 +522,10 @@ fn handle_toggle_dashboard<R: Runtime>(app: &AppHandle<R>) {
             }
         }
     } else {
-        // Window doesn't exist, create it
-        match create_dashboard_window_with_close_handler(app) {
-            Ok(_) => eprintln!("Dashboard window created successfully"),
-            Err(e) => eprintln!("Failed to create dashboard window: {}", e),
-        }
+        // Window doesn't exist, create it. The builder must not run on this
+        // thread: shortcut handlers execute on the main thread, where creating
+        // a webview window deadlocks on Windows.
+        window::spawn_dashboard_creation(app);
     }
 }
 
