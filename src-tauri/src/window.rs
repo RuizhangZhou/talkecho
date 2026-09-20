@@ -1,6 +1,6 @@
 ﻿#[cfg(target_os = "macos")]
 use tauri::LogicalPosition;
-use tauri::{App, AppHandle, Manager, Runtime, WebviewWindow, WebviewWindowBuilder};
+use tauri::{App, AppHandle, Emitter, Manager, Runtime, WebviewWindow, WebviewWindowBuilder};
 
 // The offset from the top of the screen to the window
 const TOP_OFFSET: i32 = 54;
@@ -88,6 +88,30 @@ pub fn set_window_height(window: tauri::WebviewWindow, height: u32) -> Result<()
     Ok(())
 }
 
+/// Builds the dashboard window from a background thread.
+///
+/// On Windows `WebviewWindowBuilder::build` deadlocks when it is called from
+/// the main thread while the event loop is running, which is where synchronous
+/// commands, tray menu callbacks and global shortcut handlers all run. The
+/// native window still appears, but its WebView2 controller never finishes
+/// initializing and never navigates, so the dashboard stays permanently blank.
+/// Building from another thread leaves the event loop free to finish the job.
+pub fn spawn_dashboard_creation<R: Runtime>(app: &AppHandle<R>) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        if app.get_webview_window("dashboard").is_some() {
+            return;
+        }
+
+        match create_dashboard_window_with_close_handler(&app) {
+            Ok(window) => {
+                let _ = window.set_focus();
+            }
+            Err(e) => eprintln!("Failed to create dashboard window: {}", e),
+        }
+    });
+}
+
 #[tauri::command]
 pub fn open_dashboard(app: tauri::AppHandle) -> Result<(), String> {
     // Check if dashboard window already exists
@@ -105,14 +129,12 @@ pub fn open_dashboard(app: tauri::AppHandle) -> Result<(), String> {
             }
             Err(_) => {
                 // Window reference is stale, recreate it
-                create_dashboard_window_with_close_handler(&app)
-                    .map_err(|e| format!("Failed to recreate dashboard window: {}", e))?;
+                spawn_dashboard_creation(&app);
             }
         }
     } else {
         // Window doesn't exist, create it with platform-aware defaults
-        create_dashboard_window_with_close_handler(&app)
-            .map_err(|e| format!("Failed to create dashboard window: {}", e))?;
+        spawn_dashboard_creation(&app);
     }
 
     Ok(())
@@ -139,17 +161,85 @@ pub fn toggle_dashboard(app: tauri::AppHandle) -> Result<(), String> {
             }
             Err(_) => {
                 // Window reference is stale, recreate it
-                create_dashboard_window_with_close_handler(&app)
-                    .map_err(|e| format!("Failed to recreate dashboard window: {}", e))?;
+                spawn_dashboard_creation(&app);
             }
         }
     } else {
         // Window doesn't exist, create it with close handler
-        create_dashboard_window_with_close_handler(&app)
-            .map_err(|e| format!("Failed to create dashboard window: {}", e))?;
+        spawn_dashboard_creation(&app);
     }
 
     Ok(())
+}
+
+/// Shows the compact recording bar and brings it to the foreground.
+///
+/// Hiding this window never stops its webview. That is intentional: global
+/// shortcuts, dictation and any active audio capture must keep running while
+/// TalkEcho is resident in the system tray.
+pub fn show_main_bar<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or("Main window not found")?;
+
+    window
+        .unminimize()
+        .map_err(|e| format!("Failed to restore main window: {e}"))?;
+    window
+        .show()
+        .map_err(|e| format!("Failed to show main window: {e}"))?;
+    window
+        .set_focus()
+        .map_err(|e| format!("Failed to focus main window: {e}"))?;
+    let _ = window.emit("focus-text-input", serde_json::json!({}));
+
+    #[cfg(target_os = "macos")]
+    {
+        use tauri_nspanel::ManagerExt;
+
+        if let Some(panel) = app.get_webview_panel("main") {
+            panel.show();
+        }
+    }
+
+    Ok(())
+}
+
+/// Hides the compact recording bar without destroying the window or stopping
+/// background work.
+pub fn hide_main_bar<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or("Main window not found")?;
+
+    #[cfg(target_os = "macos")]
+    {
+        use tauri_nspanel::ManagerExt;
+
+        if let Some(panel) = app.get_webview_panel("main") {
+            let _ = panel.hide();
+        }
+    }
+
+    window
+        .hide()
+        .map_err(|e| format!("Failed to hide main window: {e}"))
+}
+
+/// Toggles the recording bar using native window visibility, rather than a
+/// frontend-only CSS state. This is shared by the global shortcut and tray.
+pub fn toggle_main_bar<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or("Main window not found")?;
+
+    match window
+        .is_visible()
+        .map_err(|e| format!("Failed to read main window visibility: {e}"))?
+    {
+        true => hide_main_bar(app),
+        false => show_main_bar(app),
+    }
 }
 
 #[tauri::command]
@@ -211,7 +301,10 @@ pub fn create_dashboard_window<R: Runtime>(
         // can be verified with normal OS capture tools.
         .content_protected(!cfg!(debug_assertions))
         .visible(true)
-        .resizable(true);
+        .resizable(true)
+        // The dashboard is reached through the tray or its global shortcut.
+        // It should not claim a permanent taskbar slot on Windows.
+        .skip_taskbar(cfg!(target_os = "windows"));
 
     base_builder.build()
 }

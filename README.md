@@ -18,6 +18,7 @@ TalkEcho runs as a translucent desktop overlay that captures both system audio a
 ## Key Features
 
 - **Invisible overlay** – adjustable transparency, keyboard-driven focus, no dock/taskbar icon when stealth mode is enabled.
+- **Windows system tray** – hide the recording bar without stopping TalkEcho; click its tray icon or press `Ctrl+\` to bring it back.
 - **Dual audio (system + mic)** – simultaneous capture so the AI hears remote participants and you.
 - **Real-time translation** – default prompt streams Whisper transcripts into your chosen LLM for bilingual subtitles.
 - **Bring-your-own AI keys** – Groq, OpenAI, Anthropic, Perplexity, xAI, local Ollama… anything that exposes a curl command.
@@ -73,6 +74,16 @@ A Typeless/Wispr-Flow-style "speak instead of type" mode that works system-wide,
 
 This is an early, Windows-only beta — macOS/Linux support (and the underlying OS permissions/text-injection work they require) is planned for a later release.
 While TalkEcho is running, it reserves **Right Ctrl** for dictation and does not forward that key to other applications. **Right Alt** remains available for Typeless and AltGr input.
+
+## Windows tray mode
+
+TalkEcho stays running in the Windows system tray (next to the clock) when its
+recording bar is hidden. Hiding the bar does not stop active audio capture,
+dictation, or global shortcuts.
+
+- Click the TalkEcho tray icon, or press `Ctrl+\`, to show or hide the recording bar.
+- Right-click the icon to open the Dashboard or explicitly quit TalkEcho.
+- The tray tooltip changes to **TalkEcho — recording** while system-audio capture is active.
 
 ## Local development
 

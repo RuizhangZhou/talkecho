@@ -7,16 +7,7 @@ use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
 use tokio::time::{sleep, Duration};
 
-#[cfg(target_os = "macos")]
-use tauri_nspanel::ManagerExt;
-
-use crate::window::create_dashboard_window;
-// State for window visibility
-pub struct WindowVisibility {
-    #[allow(dead_code)]
-    pub is_hidden: Mutex<bool>,
-}
-
+use crate::window;
 // State for registered shortcuts
 pub struct RegisteredShortcuts {
     pub shortcuts: Mutex<HashMap<String, String>>, // action_id -> shortcut_key
@@ -187,69 +178,8 @@ pub fn stop_all_move_windows<R: Runtime>(app: &AppHandle<R>) {
 
 /// Handle app toggle (hide/show) with input focus and app icon management
 fn handle_toggle_window<R: Runtime>(app: &AppHandle<R>) {
-    // Get the main window
-    let Some(window) = app.get_webview_window("main") else {
-        return;
-    };
-
-    #[cfg(target_os = "windows")]
-    {
-        let state = app.state::<WindowVisibility>();
-        let mut is_hidden = state.is_hidden.lock().unwrap();
-        *is_hidden = !*is_hidden;
-
-        if let Err(e) = window.emit("toggle-window-visibility", *is_hidden) {
-            eprintln!("Failed to emit toggle-window-visibility event: {}", e);
-        }
-
-        if !*is_hidden {
-            if let Err(e) = window.show() {
-                eprintln!("Failed to show window: {}", e);
-            }
-            if let Err(e) = window.set_focus() {
-                eprintln!("Failed to focus window: {}", e);
-            }
-            if let Err(e) = window.emit("focus-text-input", json!({})) {
-                eprintln!("Failed to emit focus-text-input event: {}", e);
-            }
-        }
-        return;
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    match window.is_visible() {
-        Ok(true) => {
-            #[cfg(target_os = "macos")]
-            {
-                let panel = app.get_webview_window("main").unwrap();
-                let _ = panel.hide();
-            }
-            // Window is visible, hide it and handle app icon based on user settings
-            if let Err(e) = window.hide() {
-                eprintln!("Failed to hide window: {}", e);
-            }
-        }
-        Ok(false) => {
-            // Window is hidden, show it and handle app icon based on user settings
-            if let Err(e) = window.show() {
-                eprintln!("Failed to show window: {}", e);
-            }
-
-            if let Err(e) = window.set_focus() {
-                eprintln!("Failed to focus window: {}", e);
-            }
-
-            #[cfg(target_os = "macos")]
-            {
-                let panel = app.get_webview_panel("main").unwrap();
-                panel.show();
-            }
-            // Emit event to focus text input
-            window.emit("focus-text-input", json!({})).unwrap();
-        }
-        Err(e) => {
-            eprintln!("Failed to check window visibility: {}", e);
-        }
+    if let Err(error) = window::toggle_main_bar(app) {
+        eprintln!("Failed to toggle main window: {error}");
     }
 }
 
@@ -258,11 +188,8 @@ fn handle_audio_shortcut<R: Runtime>(app: &AppHandle<R>) {
     if let Some(window) = app.get_webview_window("main") {
         // Ensure window is visible
         if let Ok(false) = window.is_visible() {
-            if let Err(_e) = window.show() {
+            if window::show_main_bar(app).is_err() {
                 return;
-            }
-            if let Err(e) = window.set_focus() {
-                eprintln!("Failed to focus window: {}", e);
             }
         }
 
@@ -288,12 +215,9 @@ fn handle_system_audio_shortcut<R: Runtime>(app: &AppHandle<R>) {
     if let Some(window) = app.get_webview_window("main") {
         // Ensure window is visible
         if let Ok(false) = window.is_visible() {
-            if let Err(e) = window.show() {
-                eprintln!("Failed to show window: {}", e);
+            if let Err(e) = window::show_main_bar(app) {
+                eprintln!("Failed to show window: {e}");
                 return;
-            }
-            if let Err(e) = window.set_focus() {
-                eprintln!("Failed to focus window: {}", e);
             }
         }
 
@@ -598,11 +522,10 @@ fn handle_toggle_dashboard<R: Runtime>(app: &AppHandle<R>) {
             }
         }
     } else {
-        // Window doesn't exist, create it
-        match create_dashboard_window(app) {
-            Ok(_) => eprintln!("Dashboard window created successfully"),
-            Err(e) => eprintln!("Failed to create dashboard window: {}", e),
-        }
+        // Window doesn't exist, create it. The builder must not run on this
+        // thread: shortcut handlers execute on the main thread, where creating
+        // a webview window deadlocks on Windows.
+        window::spawn_dashboard_creation(app);
     }
 }
 
