@@ -7,13 +7,20 @@
 } from "./common.function";
 import { MARKDOWN_FORMATTING_INSTRUCTIONS } from "@/config";
 import { Message, TYPE_PROVIDER } from "@/types";
-import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import curl2Json from "@bany/curl-to-json";
 import { shouldUseTalkEchoAPI } from "./talkecho.api";
 import { CHUNK_POLL_INTERVAL_MS } from "../chat-constants";
-import { getResponseSettings, RESPONSE_LENGTHS, LANGUAGES } from "@/lib";
+import {
+  getResponseSettings,
+  RESPONSE_LENGTHS,
+  LANGUAGES,
+  ProviderHttpRequest,
+  isSecretVariableKey,
+  sendProviderRequest,
+  streamProviderRequest,
+} from "@/lib";
 import {
   classifyHttpFailure,
   createLinkedAbortContext,
@@ -25,38 +32,6 @@ import {
 const DEFAULT_AI_TIMEOUT_MS = 90_000;
 const DEFAULT_STREAM_INACTIVITY_TIMEOUT_MS = 30_000;
 const DEFAULT_AI_MAX_RETRIES = 1;
-
-async function readStreamWithTimeout(
-  reader: ReadableStreamDefaultReader<Uint8Array>,
-  timeoutMs: number,
-  signal: AbortSignal
-): Promise<ReadableStreamReadResult<Uint8Array>> {
-  if (signal.aborted) {
-    throw new DOMException("Request aborted", "AbortError");
-  }
-
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      reader.read(),
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => {
-          void reader.cancel("Stream inactivity timeout");
-          reject(
-            new RequestFailure(
-              `The provider stream produced no data for ${Math.round(
-                timeoutMs / 1000
-              )} seconds.`,
-              { kind: "timeout", retryable: true }
-            )
-          );
-        }, timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
 
 function buildEnhancedSystemPrompt(baseSystemPrompt?: string): string {
   const responseSettings = getResponseSettings();
@@ -207,6 +182,7 @@ export async function* fetchAIResponse(params: {
   selectedProvider: {
     provider: string;
     variables: Record<string, string>;
+    secretRef?: string;
   };
   systemPrompt?: string;
   history?: Message[];
@@ -232,7 +208,6 @@ export async function* fetchAIResponse(params: {
       maxRetries = DEFAULT_AI_MAX_RETRIES,
       onRetry,
     } = params;
-
     // Check if already aborted
     if (signal?.aborted) {
       return;
@@ -282,7 +257,11 @@ export async function* fetchAIResponse(params: {
 
     const extractedVariables = extractVariables(provider.curl);
     const requiredVars = extractedVariables.filter(
-      ({ key }) => key !== "SYSTEM_PROMPT" && key !== "TEXT" && key !== "IMAGE"
+      ({ key }) =>
+        key !== "system_prompt" &&
+        key !== "text" &&
+        key !== "image" &&
+        !isSecretVariableKey(key)
     );
     for (const { key } of requiredVars) {
       if (
@@ -350,110 +329,154 @@ export async function* fetchAIResponse(params: {
       }
     }
 
-    // Always use tauriFetch to avoid CORS issues, except for localhost during development
-    const isLocalhost = url?.includes("localhost") || url?.includes("127.0.0.1");
-    const fetchFunction = isLocalhost ? fetch : tauriFetch;
-
     for (let attempt = 0; ; attempt += 1) {
       const abortContext = createLinkedAbortContext(signal, timeoutMs);
       let emittedContent = false;
       try {
-        const response = await fetchFunction(url, {
+        const request: ProviderHttpRequest = {
           method: curlJson.method || "POST",
-          headers,
-          body: curlJson.method === "GET" ? undefined : JSON.stringify(bodyObj),
-          signal: abortContext.signal,
-        });
+          url,
+          headers: headers as Record<string, string>,
+          body:
+            curlJson.method === "GET"
+              ? undefined
+              : { kind: "text", content: JSON.stringify(bodyObj) },
+          secretRef: selectedProvider.secretRef || provider.secretRef,
+          timeoutMs,
+        };
 
-        if (!response.ok) {
-          const errorText = await response.text().catch(() => "");
-          throw classifyHttpFailure(
-            response.status,
-            response.statusText,
-            errorText,
-            response.headers.get("Retry-After")
-          );
-        }
+        if (provider.streaming) {
+          const chunks: string[] = [];
+          let response:
+            | Awaited<ReturnType<typeof streamProviderRequest>>
+            | undefined;
+          let streamError: unknown;
+          let streamDone = false;
+          let lastActivity = Date.now();
+          let buffer = "";
 
-        if (!provider.streaming) {
-          let json: unknown;
-          try {
-            json = await response.json();
-          } catch (parseError) {
-            throw new RequestFailure("The provider returned invalid JSON.", {
-              kind: "malformed_response",
-              cause: parseError,
+          const processLine = (line: string): string => {
+            if (!line.startsWith("data:")) return "";
+            const trimmed = line.substring(5).trim();
+            if (!trimmed || trimmed === "[DONE]") return "";
+            try {
+              return String(
+                getStreamingContent(
+                  JSON.parse(trimmed),
+                  provider.responseContentPath || ""
+                ) || ""
+              );
+            } catch {
+              return "";
+            }
+          };
+
+          void streamProviderRequest(request, (chunk) => {
+            chunks.push(chunk);
+            lastActivity = Date.now();
+          })
+            .then((result) => {
+              response = result;
+            })
+            .catch((error) => {
+              streamError = error;
+            })
+            .finally(() => {
+              streamDone = true;
+            });
+
+          while (!streamDone || chunks.length > 0) {
+            if (abortContext.signal.aborted) {
+              throw new DOMException("Request aborted", "AbortError");
+            }
+            while (chunks.length > 0) {
+              buffer += chunks.shift() || "";
+              const lines = buffer.split("\n");
+              buffer = lines.pop() || "";
+              for (const line of lines) {
+                const delta = processLine(line.replace(/\r$/, ""));
+                if (delta) {
+                  emittedContent = true;
+                  yield delta;
+                }
+              }
+            }
+            if (!streamDone) {
+              if (Date.now() - lastActivity > inactivityTimeoutMs) {
+                throw new RequestFailure(
+                  `The provider stream produced no data for ${Math.round(
+                    inactivityTimeoutMs / 1000
+                  )} seconds.`,
+                  { kind: "timeout", retryable: true }
+                );
+              }
+              await new Promise((resolve) =>
+                setTimeout(resolve, CHUNK_POLL_INTERVAL_MS)
+              );
+            }
+          }
+          if (streamError) throw streamError;
+          if (!response) {
+            throw new RequestFailure("The provider stream did not complete.", {
+              kind: "network",
+              retryable: true,
             });
           }
-          const content = getByPath(json, provider.responseContentPath || "") || "";
-          if (!content) {
+          if (response.status < 200 || response.status >= 300) {
+            throw classifyHttpFailure(
+              response.status,
+              response.statusText,
+              response.body,
+              response.retryAfter || null
+            );
+          }
+          const finalDelta = processLine(buffer.replace(/\r$/, ""));
+          if (finalDelta) {
+            emittedContent = true;
+            yield finalDelta;
+          }
+          if (!emittedContent) {
             throw new RequestFailure(
-              "The provider response did not contain text at the configured response path.",
+              "The provider stream completed without any response text.",
               { kind: "malformed_response" }
             );
           }
-          emittedContent = true;
-          yield String(content);
           return;
         }
 
-        if (!response.body) {
-          throw new RequestFailure("The provider returned no streaming body.", {
+        const response = await sendProviderRequest(request);
+
+        if (response.status < 200 || response.status >= 300) {
+          throw classifyHttpFailure(
+            response.status,
+            response.statusText,
+            response.body,
+            response.retryAfter || null
+          );
+        }
+
+        if (abortContext.signal.aborted) {
+          throw new DOMException("Request aborted", "AbortError");
+        }
+
+        let json: unknown;
+        try {
+          json = JSON.parse(response.body);
+        } catch (parseError) {
+          throw new RequestFailure("The provider returned invalid JSON.", {
             kind: "malformed_response",
+            cause: parseError,
           });
         }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-
-        const processLine = (line: string): string => {
-          if (!line.startsWith("data:")) return "";
-          const trimmed = line.substring(5).trim();
-          if (!trimmed || trimmed === "[DONE]") return "";
-          try {
-            return String(
-              getStreamingContent(
-                JSON.parse(trimmed),
-                provider.responseContentPath || ""
-              ) || ""
-            );
-          } catch {
-            return "";
-          }
-        };
-
-        while (true) {
-          const { done, value } = await readStreamWithTimeout(
-            reader,
-            inactivityTimeoutMs,
-            abortContext.signal
-          );
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() || "";
-          for (const line of lines) {
-            const delta = processLine(line);
-            if (delta) {
-              emittedContent = true;
-              yield delta;
-            }
-          }
-        }
-
-        const finalDelta = processLine(buffer.trim());
-        if (finalDelta) {
-          emittedContent = true;
-          yield finalDelta;
-        }
-        if (!emittedContent) {
+        const content = getByPath(json, provider.responseContentPath || "") || "";
+        if (!content) {
           throw new RequestFailure(
-            "The provider stream completed without any response text.",
+            "The provider response did not contain text at the configured response path.",
             { kind: "malformed_response" }
           );
         }
+        emittedContent = true;
+        yield String(content);
         return;
       } catch (error) {
         const failure = normalizeRequestFailure(error, {

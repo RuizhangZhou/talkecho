@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { PageLayout } from "@/layouts";
 import {
   Card,
@@ -7,57 +7,34 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Button, Input } from "@/components";
+import { Button, SecretInput } from "@/components";
 import { useSettings } from "@/hooks";
+import { providerSecretRef } from "@/lib";
 
 const Dashboard = () => {
-  const {
-    selectedAIProvider,
-    onSetSelectedAIProvider,
-    onSetSelectedSttProvider,
-  } = useSettings();
+  const { onSetSelectedAIProvider, onSetSelectedSttProvider } = useSettings();
 
-  const [groqApiKey, setGroqApiKey] = useState("");
-  const [status, setStatus] = useState<"idle" | "success" | "error">("idle");
-  const [isSaving, setIsSaving] = useState(false);
+  const [status, setStatus] = useState<"idle" | "success">("idle");
 
-  useEffect(() => {
-    if (selectedAIProvider.provider === "groq") {
-      setGroqApiKey(selectedAIProvider.variables?.api_key || "");
-    }
-  }, [selectedAIProvider.provider, selectedAIProvider.variables]);
-
-  const handleSaveGroqKey = () => {
-    if (!groqApiKey.trim()) {
-      setStatus("error");
-      return;
-    }
-
-    setIsSaving(true);
-    setStatus("idle");
-
-    try {
-      const apiKeyValue = groqApiKey.trim();
+  const handleGroqCredentialChange = (configured: boolean) => {
+    if (configured) {
       onSetSelectedAIProvider({
         provider: "groq",
         variables: {
-          api_key: apiKeyValue,
           model: "llama-3.1-8b-instant",
         },
+        secretRef: providerSecretRef("ai", "groq"),
       });
       onSetSelectedSttProvider({
         provider: "groq",
         variables: {
-          api_key: apiKeyValue,
           model: "whisper-large-v3-turbo",
         },
+        secretRef: providerSecretRef("stt", "groq"),
       });
       setStatus("success");
-    } catch (error) {
-      console.error("Failed to save Groq API key:", error);
-      setStatus("error");
-    } finally {
-      setIsSaving(false);
+    } else {
+      setStatus("idle");
     }
   };
 
@@ -120,38 +97,21 @@ const Dashboard = () => {
             </ol>
 
             <div className="space-y-2">
-              <Input
-                type="password"
-                placeholder="sk-********************************"
-                value={groqApiKey}
-                onChange={(e) => {
-                  setGroqApiKey(e.target.value);
-                  if (status !== "idle") setStatus("idle");
-                }}
-                className="h-11"
+              <SecretInput
+                secretRef={providerSecretRef("ai", "groq")}
+                additionalSecretRefs={[providerSecretRef("stt", "groq")]}
+                onConfiguredChange={handleGroqCredentialChange}
               />
               <p className="text-xs text-muted-foreground">
-                Stored locally. Used for Groq Whisper + Llama 3.1 automatically.
+                Stored in your operating system's credential manager. Used for
+                Groq Whisper + Llama 3.1 automatically.
               </p>
             </div>
-
-            <Button
-              onClick={handleSaveGroqKey}
-              disabled={isSaving || !groqApiKey.trim()}
-              className="w-full"
-            >
-              {isSaving ? "Saving..." : "Save & Enable Groq"}
-            </Button>
 
             {status === "success" && (
               <p className="text-xs text-green-600 bg-green-500/10 p-2 rounded-md">
                 ✓ Groq is ready! TalkEcho will use Whisper + Llama 3.1 with your
                 key.
-              </p>
-            )}
-            {status === "error" && (
-              <p className="text-xs text-red-600 bg-red-500/10 p-2 rounded-md">
-                Please paste a valid Groq API key and try again.
               </p>
             )}
           </CardContent>

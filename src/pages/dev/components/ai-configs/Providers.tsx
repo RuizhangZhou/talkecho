@@ -1,7 +1,7 @@
-import { Button, Header, Input, Selection, TextInput } from "@/components";
+import { Header, SecretInput, Selection, TextInput } from "@/components";
+import { isSecretVariableKey, providerSecretRef } from "@/lib";
 import { UseSettingsReturn } from "@/types";
 import curl2Json, { ResultJSON } from "@bany/curl-to-json";
-import { KeyIcon, TrashIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 export const Providers = ({
@@ -27,16 +27,6 @@ export const Providers = ({
 
   const findKeyAndValue = (key: string) => {
     return variables?.find((v) => v?.key === key);
-  };
-
-  const getApiKeyValue = () => {
-    const apiKeyVar = findKeyAndValue("api_key");
-    if (!apiKeyVar || !selectedAIProvider?.variables) return "";
-    return selectedAIProvider?.variables?.[apiKeyVar.key] || "";
-  };
-
-  const isApiKeyEmpty = () => {
-    return !getApiKeyValue().trim();
   };
 
   return (
@@ -87,96 +77,30 @@ export const Providers = ({
               )?.isCustom
                 ? "Custom Provider"
                 : selectedAIProvider?.provider
-            } API key to authenticate and access AI models. Your key is stored locally and never shared.`}
+            } API key. TalkEcho stores it in your operating system's credential manager and never reads it back into this field.`}
           />
-
-          <div className="space-y-2">
-            <div className="flex gap-2">
-              <Input
-                type="password"
-                placeholder="**********"
-                value={getApiKeyValue()}
-                onChange={(value) => {
-                  const apiKeyVar = findKeyAndValue("api_key");
-                  if (!apiKeyVar || !selectedAIProvider) return;
-
-                  onSetSelectedAIProvider({
-                    ...selectedAIProvider,
-                    variables: {
-                      ...selectedAIProvider.variables,
-                      [apiKeyVar.key]:
-                        typeof value === "string" ? value : value.target.value,
-                    },
-                  });
-                }}
-                onKeyDown={(e) => {
-                  const apiKeyVar = findKeyAndValue("api_key");
-                  if (!apiKeyVar || !selectedAIProvider) return;
-
-                  onSetSelectedAIProvider({
-                    ...selectedAIProvider,
-                    variables: {
-                      ...selectedAIProvider.variables,
-                      [apiKeyVar.key]: (e.target as HTMLInputElement).value,
-                    },
-                  });
-                }}
-                disabled={false}
-                className="flex-1 h-11 border-1 border-input/50 focus:border-primary/50 transition-colors"
-              />
-              {isApiKeyEmpty() ? (
-                <Button
-                  onClick={() => {
-                    const apiKeyVar = findKeyAndValue("api_key");
-                    if (!apiKeyVar || !selectedAIProvider || isApiKeyEmpty())
-                      return;
-
-                    onSetSelectedAIProvider({
-                      ...selectedAIProvider,
-                      variables: {
-                        ...selectedAIProvider.variables,
-                        [apiKeyVar.key]: getApiKeyValue(),
-                      },
-                    });
-                  }}
-                  disabled={isApiKeyEmpty()}
-                  size="icon"
-                  className="shrink-0 h-11 w-11"
-                  title="Submit API Key"
-                >
-                  <KeyIcon className="h-4 w-4" />
-                </Button>
-              ) : (
-                <Button
-                  onClick={() => {
-                    const apiKeyVar = findKeyAndValue("api_key");
-                    if (!apiKeyVar || !selectedAIProvider) return;
-
-                    onSetSelectedAIProvider({
-                      ...selectedAIProvider,
-                      variables: {
-                        ...selectedAIProvider.variables,
-                        [apiKeyVar.key]: "",
-                      },
-                    });
-                  }}
-                  size="icon"
-                  variant="destructive"
-                  className="shrink-0 h-11 w-11"
-                  title="Remove API Key"
-                >
-                  <TrashIcon className="h-4 w-4" />
-                </Button>
-              )}
-            </div>
-          </div>
+          <SecretInput
+            secretRef={
+              selectedAIProvider.secretRef ||
+              providerSecretRef("ai", selectedAIProvider.provider)
+            }
+            onConfiguredChange={() =>
+              onSetSelectedAIProvider({
+                ...selectedAIProvider,
+                secretRef: providerSecretRef(
+                  "ai",
+                  selectedAIProvider.provider
+                ),
+              })
+            }
+          />
         </div>
       ) : null}
 
       <div className="space-y-4 mt-2">
         {variables
           .filter(
-            (variable) => variable.key !== findKeyAndValue("api_key")?.key
+            (variable) => !isSecretVariableKey(variable.key)
           )
           .map((variable) => {
             const getVariableValue = () => {

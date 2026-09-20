@@ -8,6 +8,9 @@ import {
   updateCustomAiProvider,
   removeCustomAiProvider,
   validateCurl,
+  validateProviderCredentialTemplate,
+  deleteProviderSecret,
+  providerSecretRef,
 } from "@/lib";
 
 export function useCustomAiProviders() {
@@ -62,6 +65,7 @@ export function useCustomAiProviders() {
     if (!deleteConfirm) return;
 
     try {
+      await deleteProviderSecret(providerSecretRef("ai", deleteConfirm));
       const success = removeCustomAiProvider(deleteConfirm);
       if (success) {
         setDeleteConfirm(null);
@@ -83,9 +87,14 @@ export function useCustomAiProviders() {
     if (!formData.curl.trim()) {
       newErrors.curl = "Curl command is required";
     } else {
-      const validation = validateCurl(formData.curl, ["TEXT"]);
-      if (!validation.isValid) {
-        newErrors.curl = validation.message || "";
+      const credentialError = validateProviderCredentialTemplate(formData.curl);
+      if (credentialError) {
+        newErrors.curl = credentialError;
+      } else {
+        const validation = validateCurl(formData.curl, ["TEXT"]);
+        if (!validation.isValid) {
+          newErrors.curl = validation.message || "";
+        }
       }
     }
 

@@ -7,4 +7,6 @@ export * from "./database";
 export * from "./chat-constants";
 export * from "./platform";
 export * from "./analytics";
+export * from "./provider-secrets";
+export * from "./provider-http";
 export * from "./response-settings.constants";
