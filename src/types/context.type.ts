@@ -24,7 +24,18 @@ export type IContextType = {
     provider: string;
     variables: Record<string, string>;
   };
+  selectedDictationSttProvider: {
+    provider: string;
+    variables: Record<string, string>;
+  };
   onSetSelectedSttProvider: ({
+    provider,
+    variables,
+  }: {
+    provider: string;
+    variables: Record<string, string>;
+  }) => void;
+  onSetSelectedDictationSttProvider: ({
     provider,
     variables,
   }: {

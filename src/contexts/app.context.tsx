@@ -178,6 +178,14 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     provider: "",
     variables: {},
   });
+  const [selectedDictationSttProvider, setSelectedDictationSttProvider] =
+    useState<{
+      provider: string;
+      variables: Record<string, string>;
+    }>({
+      provider: "",
+      variables: {},
+    });
 
   const [sttLanguage, setSttLanguage] = useState<string>(
     safeLocalStorage.getItem(STORAGE_KEYS.STT_LANGUAGE) || "en"
@@ -290,7 +298,23 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       STORAGE_KEYS.SELECTED_STT_PROVIDER
     );
     if (savedSelectedStt) {
-      setSelectedSttProvider(JSON.parse(savedSelectedStt));
+      const selected = JSON.parse(savedSelectedStt);
+      setSelectedSttProvider(selected);
+      const savedSelectedDictationStt = safeLocalStorage.getItem(
+        STORAGE_KEYS.SELECTED_DICTATION_STT_PROVIDER
+      );
+      setSelectedDictationSttProvider(
+        savedSelectedDictationStt
+          ? JSON.parse(savedSelectedDictationStt)
+          : selected
+      );
+    } else {
+      const savedSelectedDictationStt = safeLocalStorage.getItem(
+        STORAGE_KEYS.SELECTED_DICTATION_STT_PROVIDER
+      );
+      if (savedSelectedDictationStt) {
+        setSelectedDictationSttProvider(JSON.parse(savedSelectedDictationStt));
+      }
     }
 
     // Load STT language
@@ -477,6 +501,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         e.key === STORAGE_KEYS.SELECTED_AI_PROVIDER ||
         e.key === STORAGE_KEYS.CUSTOM_SPEECH_PROVIDERS ||
         e.key === STORAGE_KEYS.SELECTED_STT_PROVIDER ||
+        e.key === STORAGE_KEYS.SELECTED_DICTATION_STT_PROVIDER ||
         e.key === STORAGE_KEYS.SYSTEM_PROMPT ||
         e.key === STORAGE_KEYS.SCREENSHOT_CONFIG ||
         e.key === STORAGE_KEYS.CUSTOMIZABLE ||
@@ -509,6 +534,16 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       );
     }
   }, [selectedSttProvider, isDataLoaded]);
+
+  // Sync dictation STT provider to localStorage (only after initial load)
+  useEffect(() => {
+    if (isDataLoaded && selectedDictationSttProvider.provider) {
+      safeLocalStorage.setItem(
+        STORAGE_KEYS.SELECTED_DICTATION_STT_PROVIDER,
+        JSON.stringify(selectedDictationSttProvider)
+      );
+    }
+  }, [selectedDictationSttProvider, isDataLoaded]);
 
   // Sync STT language to localStorage
   useEffect(() => {
@@ -640,6 +675,57 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     }
 
     setSelectedSttProvider((prev) => ({ ...prev, provider, variables: nextVariables }));
+    if (selectedDictationSttProvider.provider === provider) {
+      setSelectedDictationSttProvider((prev) => ({
+        ...prev,
+        variables: nextVariables,
+      }));
+    }
+  };
+
+  const onSetSelectedDictationSttProvider = ({
+    provider,
+    variables,
+  }: {
+    provider: string;
+    variables: Record<string, string>;
+  }) => {
+    if (provider && !allSttProviders.some((p) => p.id === provider)) {
+      console.warn(`Invalid dictation STT provider ID: ${provider}`);
+      return;
+    }
+
+    const isSwitching = provider !== selectedDictationSttProvider.provider;
+    const variablesByIdKey = STORAGE_KEYS.STT_PROVIDER_VARIABLES_BY_ID;
+    const variablesById = getProviderVariablesById(variablesByIdKey);
+
+    if (isSwitching && selectedDictationSttProvider.provider) {
+      variablesById[selectedDictationSttProvider.provider] =
+        selectedDictationSttProvider.variables;
+    }
+
+    const shouldRestore =
+      isSwitching && Object.keys(variables || {}).length === 0;
+    const nextVariables = sanitizeProviderVariables(
+      shouldRestore ? variablesById[provider] : variables
+    );
+
+    if (provider) {
+      variablesById[provider] = nextVariables;
+      setProviderVariablesById(variablesByIdKey, variablesById);
+    }
+
+    setSelectedDictationSttProvider((prev) => ({
+      ...prev,
+      provider,
+      variables: nextVariables,
+    }));
+    if (selectedSttProvider.provider === provider) {
+      setSelectedSttProvider((prev) => ({
+        ...prev,
+        variables: nextVariables,
+      }));
+    }
   };
 
   // Toggle handlers
@@ -707,6 +793,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     customSttProviders,
     selectedSttProvider,
     onSetSelectedSttProvider,
+    selectedDictationSttProvider,
+    onSetSelectedDictationSttProvider,
     sttLanguage,
     onSetSttLanguage: setSttLanguage,
     dictationSttLanguage,

@@ -10,6 +10,7 @@ export const STORAGE_KEYS = {
   CUSTOM_SPEECH_PROVIDERS: "curl_custom_speech_providers",
   SELECTED_AI_PROVIDER: "curl_selected_ai_provider",
   SELECTED_STT_PROVIDER: "curl_selected_stt_provider",
+  SELECTED_DICTATION_STT_PROVIDER: "curl_selected_dictation_stt_provider",
   AI_PROVIDER_VARIABLES_BY_ID: "curl_ai_provider_variables_by_id",
   STT_PROVIDER_VARIABLES_BY_ID: "curl_stt_provider_variables_by_id",
   SYSTEM_AUDIO_CONTEXT: "system_audio_context",

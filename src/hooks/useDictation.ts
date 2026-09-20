@@ -33,7 +33,7 @@ export type useDictationType = ReturnType<typeof useDictation>;
  */
 export function useDictation() {
   const {
-    selectedSttProvider,
+    selectedDictationSttProvider,
     allSttProviders,
     selectedAIProvider,
     allAiProviders,
@@ -181,18 +181,18 @@ export function useDictation() {
 
       const useTalkEchoAPI = await shouldUseTalkEchoAPI();
       const sttProviderConfig = allSttProviders.find(
-        (p) => p.id === selectedSttProvider.provider
+        (p) => p.id === selectedDictationSttProvider.provider
       );
       debugLog(
-        `stopRecording: useTalkEchoAPI=${useTalkEchoAPI} sttProvider=${selectedSttProvider.provider} found=${!!sttProviderConfig} language=${dictationSttLanguage}`
+        `stopRecording: useTalkEchoAPI=${useTalkEchoAPI} sttProvider=${selectedDictationSttProvider.provider} found=${!!sttProviderConfig} language=${dictationSttLanguage}`
       );
-      if (!useTalkEchoAPI && (!selectedSttProvider.provider || !sttProviderConfig)) {
+      if (!useTalkEchoAPI && (!selectedDictationSttProvider.provider || !sttProviderConfig)) {
         throw new Error("No speech-to-text provider configured. Set one up in Dev Space.");
       }
 
       const rawTranscript = await fetchSTT({
         provider: sttProviderConfig,
-        selectedProvider: selectedSttProvider,
+        selectedProvider: selectedDictationSttProvider,
         audio: audioBlob,
         language: dictationSttLanguage,
         onDebug: (message) => debugLog(message),
@@ -248,7 +248,7 @@ export function useDictation() {
   }, [
     teardownRecording,
     allSttProviders,
-    selectedSttProvider,
+    selectedDictationSttProvider,
     dictationSttLanguage,
     allAiProviders,
     selectedAIProvider,

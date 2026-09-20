@@ -15,8 +15,10 @@ export const useSettings = () => {
     allSttProviders,
     selectedAIProvider,
     selectedSttProvider,
+    selectedDictationSttProvider,
     onSetSelectedAIProvider,
     onSetSelectedSttProvider,
+    onSetSelectedDictationSttProvider,
     sttLanguage,
     onSetSttLanguage,
     dictationSttLanguage,
@@ -31,6 +33,9 @@ export const useSettings = () => {
       key: string;
       value: string;
     }[]
+  >([]);
+  const [dictationSttVariables, setDictationSttVariables] = useState<
+    { key: string; value: string }[]
   >([]);
 
   const [showDeleteConfirmDialog, setShowDeleteConfirmDialog] = useState(false);
@@ -89,6 +94,18 @@ export const useSettings = () => {
     }
   }, [selectedSttProvider.provider]);
 
+  useEffect(() => {
+    if (selectedDictationSttProvider.provider) {
+      const provider = allSttProviders.find(
+        (p) => p.id === selectedDictationSttProvider.provider
+      );
+      if (provider) {
+        const variables = extractVariables(provider?.curl);
+        setDictationSttVariables(variables);
+      }
+    }
+  }, [selectedDictationSttProvider.provider, allSttProviders]);
+
   const handleDeleteAllChatsConfirm = async () => {
     try {
       await deleteAllConversations();
@@ -108,8 +125,10 @@ export const useSettings = () => {
     allSttProviders,
     selectedAIProvider,
     selectedSttProvider,
+    selectedDictationSttProvider,
     onSetSelectedAIProvider,
     onSetSelectedSttProvider,
+    onSetSelectedDictationSttProvider,
     sttLanguage,
     onSetSttLanguage,
     dictationSttLanguage,
@@ -119,6 +138,7 @@ export const useSettings = () => {
     setShowDeleteConfirmDialog,
     variables,
     sttVariables,
+    dictationSttVariables,
     hasActiveLicense,
   };
 };

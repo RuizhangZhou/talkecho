@@ -16,11 +16,19 @@ export interface UseSettingsReturn {
     provider: string;
     variables: Record<string, string>;
   };
+  selectedDictationSttProvider: {
+    provider: string;
+    variables: Record<string, string>;
+  };
   onSetSelectedAIProvider: (provider: {
     provider: string;
     variables: Record<string, string>;
   }) => void;
   onSetSelectedSttProvider: (provider: {
+    provider: string;
+    variables: Record<string, string>;
+  }) => void;
+  onSetSelectedDictationSttProvider: (provider: {
     provider: string;
     variables: Record<string, string>;
   }) => void;
@@ -33,5 +41,6 @@ export interface UseSettingsReturn {
   setShowDeleteConfirmDialog: React.Dispatch<React.SetStateAction<boolean>>;
   variables: { key: string; value: string }[];
   sttVariables: { key: string; value: string }[];
+  dictationSttVariables: { key: string; value: string }[];
   hasActiveLicense: boolean;
 }

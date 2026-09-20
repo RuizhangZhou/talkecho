@@ -1,22 +1,150 @@
 import { Button, Header, Input, Selection, TextInput } from "@/components";
+import { extractVariables } from "@/lib";
 import { UseSettingsReturn } from "@/types";
 import curl2Json, { ResultJSON } from "@bany/curl-to-json";
 import { KeyIcon, TrashIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
+
+type ProviderSelection = UseSettingsReturn["selectedSttProvider"];
+
+type ProviderEditorProps = {
+  title: string;
+  description: string;
+  allSttProviders: UseSettingsReturn["allSttProviders"];
+  selectedProvider: ProviderSelection;
+  onSetSelectedProvider: UseSettingsReturn["onSetSelectedSttProvider"];
+};
+
+const ProviderEditor = ({
+  title,
+  description,
+  allSttProviders,
+  selectedProvider,
+  onSetSelectedProvider,
+}: ProviderEditorProps) => {
+  const provider = allSttProviders.find(
+    (item) => item.id === selectedProvider.provider
+  );
+  const parsedProvider = useMemo<ResultJSON | null>(() => {
+    if (!provider?.curl) return null;
+    return curl2Json(provider.curl) as ResultJSON;
+  }, [provider?.curl]);
+  const variables = provider?.curl ? extractVariables(provider.curl) : [];
+  const apiKeyVariable = variables.find((variable) => variable.key === "api_key");
+  const providerLabel = provider?.isCustom
+    ? parsedProvider?.url || "Custom Provider"
+    : provider?.id || "STT provider";
+  const apiKeyValue = apiKeyVariable
+    ? selectedProvider.variables?.[apiKeyVariable.key] || ""
+    : "";
+
+  const setVariable = (key: string, value: string) => {
+    onSetSelectedProvider({
+      ...selectedProvider,
+      variables: { ...selectedProvider.variables, [key]: value },
+    });
+  };
+
+  if (!selectedProvider.provider || !provider) return null;
+
+  return (
+    <div className="space-y-3 rounded-xl border border-border/50 p-3">
+      <Header title={title} description={description} />
+      {parsedProvider ? (
+        <Header
+          title={`Method: ${parsedProvider.method || "Invalid"}, Endpoint: ${
+            parsedProvider.url || "Invalid"
+          }`}
+          description="Provider settings are stored independently by provider ID, so the meeting and dictation paths can use different models."
+        />
+      ) : null}
+
+      {apiKeyVariable ? (
+        <div className="space-y-2">
+          <Header
+            title="API Key"
+            description={`Enter your ${providerLabel} API key. It is stored locally and never shared.`}
+          />
+          <div className="flex gap-2">
+            <Input
+              type="password"
+              placeholder="**********"
+              value={apiKeyValue}
+              onChange={(value) =>
+                setVariable(
+                  apiKeyVariable.key,
+                  typeof value === "string" ? value : value.target.value
+                )
+              }
+              onKeyDown={(event) =>
+                setVariable(
+                  apiKeyVariable.key,
+                  (event.target as HTMLInputElement).value
+                )
+              }
+              className="flex-1 h-11 border-1 border-input/50 focus:border-primary/50 transition-colors"
+            />
+            {apiKeyValue.trim() ? (
+              <Button
+                onClick={() => setVariable(apiKeyVariable.key, "")}
+                size="icon"
+                variant="destructive"
+                className="shrink-0 h-11 w-11"
+                title="Remove API Key"
+              >
+                <TrashIcon className="h-4 w-4" />
+              </Button>
+            ) : (
+              <Button
+                disabled
+                size="icon"
+                className="shrink-0 h-11 w-11"
+                title="Enter an API key"
+              >
+                <KeyIcon className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
+        </div>
+      ) : null}
+
+      {variables
+        .filter(
+          (variable) =>
+            variable.key !== apiKeyVariable?.key &&
+            variable.key.toUpperCase() !== "LANGUAGE"
+        )
+        .map((variable) => (
+          <div className="space-y-1" key={variable.key}>
+            <Header
+              title={variable.value}
+              description={`Set ${variable.key.replace(/_/g, " ")} for ${providerLabel}.`}
+            />
+            <TextInput
+              placeholder={`Enter ${providerLabel} ${variable.key.replace(
+                /_/g,
+                " "
+              )}`}
+              value={selectedProvider.variables?.[variable.key] || ""}
+              onChange={(value) => setVariable(variable.key, value)}
+            />
+          </div>
+        ))}
+    </div>
+  );
+};
 
 export const Providers = ({
   allSttProviders,
   selectedSttProvider,
+  selectedDictationSttProvider,
   onSetSelectedSttProvider,
+  onSetSelectedDictationSttProvider,
   sttLanguage,
   onSetSttLanguage,
   dictationSttLanguage,
   onSetDictationSttLanguage,
-  sttVariables,
 }: UseSettingsReturn) => {
-  const [localSelectedProvider, setLocalSelectedProvider] =
-    useState<ResultJSON | null>(null);
-
   const LANGUAGES = [
     { label: "🇺🇸 English", value: "en" },
     { label: "🇩🇪 German", value: "de" },
@@ -29,61 +157,65 @@ export const Providers = ({
     { label: "✨ Auto detect", value: "auto" },
     ...LANGUAGES,
   ];
-
-  useEffect(() => {
-    if (selectedSttProvider?.provider) {
-      const provider = allSttProviders?.find(
-        (p) => p?.id === selectedSttProvider?.provider
-      );
-      if (provider) {
-        const json = curl2Json(provider?.curl);
-        setLocalSelectedProvider(json as ResultJSON);
-      }
-    }
-  }, [selectedSttProvider?.provider]);
-
-  const findKeyAndValue = (key: string) => {
-    return sttVariables?.find((v) => v?.key === key);
-  };
-
-  const getApiKeyValue = () => {
-    const apiKeyVar = findKeyAndValue("api_key");
-    if (!apiKeyVar || !selectedSttProvider?.variables) return "";
-    return selectedSttProvider?.variables?.[apiKeyVar.key] || "";
-  };
-
-  const isApiKeyEmpty = () => {
-    return !getApiKeyValue().trim();
-  };
+  const providerOptions = allSttProviders.map((provider) => {
+    const json = curl2Json(provider.curl) as ResultJSON;
+    return {
+      label:
+        provider.isCustom
+          ? json?.url || "Custom Provider"
+          : provider.id || "Custom Provider",
+      value: provider.id || "",
+      isCustom: provider.isCustom,
+    };
+  });
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       <div className="space-y-2">
         <Header
-          title="Select STT Provider"
-          description="Select your preferred STT service provider or custom providers to get started."
+          title="Meeting / Live STT Provider"
+          description="Used for real-time meeting transcription and captions. Prefer a fast model with low latency."
         />
         <Selection
-          selected={selectedSttProvider?.provider}
-          options={allSttProviders?.map((provider) => {
-            const json = curl2Json(provider?.curl);
-            return {
-              label: provider?.isCustom
-                ? json?.url || "Custom Provider"
-                : provider?.id || "Custom Provider",
-              value: provider?.id || "Custom Provider",
-              isCustom: provider?.isCustom,
-            };
-          })}
-          placeholder="Choose your STT provider"
-          onChange={(value) => {
-            onSetSelectedSttProvider({
-              provider: value,
-              variables: {},
-            });
-          }}
+          selected={selectedSttProvider.provider}
+          options={providerOptions}
+          placeholder="Choose the meeting / live STT provider"
+          onChange={(provider) =>
+            onSetSelectedSttProvider({ provider, variables: {} })
+          }
         />
       </div>
+
+      <ProviderEditor
+        title="Meeting / Live STT Configuration"
+        description="Configure the endpoint, model and credentials used by meeting transcription."
+        allSttProviders={allSttProviders}
+        selectedProvider={selectedSttProvider}
+        onSetSelectedProvider={onSetSelectedSttProvider}
+      />
+
+      <div className="space-y-2">
+        <Header
+          title="Dictation STT Provider"
+          description="Used only by Right Ctrl dictation. Choose a more accurate model if you prefer quality over latency. It can be different from the meeting / live model."
+        />
+        <Selection
+          selected={selectedDictationSttProvider.provider}
+          options={providerOptions}
+          placeholder="Choose the dictation STT provider"
+          onChange={(provider) =>
+            onSetSelectedDictationSttProvider({ provider, variables: {} })
+          }
+        />
+      </div>
+
+      <ProviderEditor
+        title="Dictation STT Configuration"
+        description="Configure the endpoint, model and credentials used by Right Ctrl dictation."
+        allSttProviders={allSttProviders}
+        selectedProvider={selectedDictationSttProvider}
+        onSetSelectedProvider={onSetSelectedDictationSttProvider}
+      />
 
       <div className="space-y-2">
         <Header
@@ -94,179 +226,21 @@ export const Providers = ({
           selected={sttLanguage}
           options={LANGUAGES}
           placeholder="Select language"
-          onChange={(value) => onSetSttLanguage(value)}
+          onChange={onSetSttLanguage}
         />
       </div>
 
       <div className="space-y-2">
         <Header
           title="Dictation STT Language"
-          description="Used only by Right Ctrl dictation. Auto detect is recommended for multilingual speech; your provider must support omitting the language hint."
+          description="Used only by Right Ctrl dictation. Auto detect is recommended for multilingual speech; your dictation provider must support omitting the language hint."
         />
         <Selection
           selected={dictationSttLanguage}
           options={DICTATION_LANGUAGES}
           placeholder="Select dictation language"
-          onChange={(value) => onSetDictationSttLanguage(value)}
+          onChange={onSetDictationSttLanguage}
         />
-      </div>
-
-      {localSelectedProvider ? (
-        <Header
-          title={`Method: ${
-            localSelectedProvider?.method || "Invalid"
-          }, Endpoint: ${localSelectedProvider?.url || "Invalid"}`}
-          description={`If you want to use different url or method, you can always create a custom provider.`}
-        />
-      ) : null}
-      {findKeyAndValue("api_key") ? (
-        <div className="space-y-2">
-          <Header
-            title="API Key"
-            description={`Enter your ${
-              allSttProviders?.find(
-                (p) => p?.id === selectedSttProvider?.provider
-              )?.isCustom
-                ? "Custom Provider"
-                : selectedSttProvider?.provider
-            } API key to authenticate and access STT models. Your key is stored locally and never shared.`}
-          />
-
-          <div className="space-y-2">
-            <div className="flex gap-2">
-              <Input
-                type="password"
-                placeholder="**********"
-                value={getApiKeyValue()}
-                onChange={(value) => {
-                  const apiKeyVar = findKeyAndValue("api_key");
-                  if (!apiKeyVar || !selectedSttProvider) return;
-
-                  onSetSelectedSttProvider({
-                    ...selectedSttProvider,
-                    variables: {
-                      ...selectedSttProvider.variables,
-                      [apiKeyVar.key]:
-                        typeof value === "string" ? value : value.target.value,
-                    },
-                  });
-                }}
-                onKeyDown={(e) => {
-                  const apiKeyVar = findKeyAndValue("api_key");
-                  if (!apiKeyVar || !selectedSttProvider) return;
-
-                  onSetSelectedSttProvider({
-                    ...selectedSttProvider,
-                    variables: {
-                      ...selectedSttProvider.variables,
-                      [apiKeyVar.key]: (e.target as HTMLInputElement).value,
-                    },
-                  });
-                }}
-                disabled={false}
-                className="flex-1 h-11 border-1 border-input/50 focus:border-primary/50 transition-colors"
-              />
-              {isApiKeyEmpty() ? (
-                <Button
-                  onClick={() => {
-                    const apiKeyVar = findKeyAndValue("api_key");
-                    if (!apiKeyVar || !selectedSttProvider || isApiKeyEmpty())
-                      return;
-
-                    onSetSelectedSttProvider({
-                      ...selectedSttProvider,
-                      variables: {
-                        ...selectedSttProvider.variables,
-                        [apiKeyVar.key]: getApiKeyValue(),
-                      },
-                    });
-                  }}
-                  disabled={isApiKeyEmpty()}
-                  size="icon"
-                  className="shrink-0 h-11 w-11"
-                  title="Submit API Key"
-                >
-                  <KeyIcon className="h-4 w-4" />
-                </Button>
-              ) : (
-                <Button
-                  onClick={() => {
-                    const apiKeyVar = findKeyAndValue("api_key");
-                    if (!apiKeyVar || !selectedSttProvider) return;
-
-                    onSetSelectedSttProvider({
-                      ...selectedSttProvider,
-                      variables: {
-                        ...selectedSttProvider.variables,
-                        [apiKeyVar.key]: "",
-                      },
-                    });
-                  }}
-                  size="icon"
-                  variant="destructive"
-                  className="shrink-0 h-11 w-11"
-                  title="Remove API Key"
-                >
-                  <TrashIcon className="h-4 w-4" />
-                </Button>
-              )}
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      <div className="space-y-4 mt-2">
-        {sttVariables
-          ?.filter(
-            (variable) => 
-              variable?.key !== findKeyAndValue("api_key")?.key &&
-              variable?.key?.toUpperCase() !== "LANGUAGE"
-          )
-          .map((variable) => {
-            const getVariableValue = () => {
-              if (!variable?.key || !selectedSttProvider?.variables) return "";
-              return selectedSttProvider.variables[variable.key] || "";
-            };
-
-            return (
-              <div className="space-y-1" key={variable?.key}>
-                <Header
-                  title={variable?.value || ""}
-                  description={`add your preferred ${variable?.key?.replace(
-                    /_/g,
-                    " "
-                  )} for ${
-                    allSttProviders?.find(
-                      (p) => p?.id === selectedSttProvider?.provider
-                    )?.isCustom
-                      ? "Custom Provider"
-                      : selectedSttProvider?.provider
-                  }`}
-                />
-                <TextInput
-                  placeholder={`Enter ${
-                    allSttProviders?.find(
-                      (p) => p?.id === selectedSttProvider?.provider
-                    )?.isCustom
-                      ? "Custom Provider"
-                      : selectedSttProvider?.provider
-                  } ${variable?.key?.replace(/_/g, " ") || "value"}`}
-                  value={getVariableValue()}
-                  onChange={(value) => {
-                    if (!variable?.key || !selectedSttProvider) return;
-
-                    onSetSelectedSttProvider({
-                      ...selectedSttProvider,
-                      variables: {
-                        ...selectedSttProvider.variables,
-                        [variable.key]: value,
-                      },
-                    });
-                  }}
-                />
-              </div>
-            );
-          })}
       </div>
     </div>
   );
