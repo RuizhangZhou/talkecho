@@ -11,6 +11,7 @@ interface MarkdownRendererProps {
 export function Markdown({ children, isStreaming = false }: MarkdownRendererProps) {
   return (
     <Streamdown
+      className="select-text"
       isAnimating={isStreaming}
       shikiTheme={["github-light", "github-dark"]}
       components={COMPONENTS as any}

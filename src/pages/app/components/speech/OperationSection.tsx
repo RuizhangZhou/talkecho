@@ -44,7 +44,7 @@ export const OperationSection = ({
   }, [conversation.messages.length, openConversation]);
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3 select-text">
       {(lastAIResponse || isAIProcessing) && !includeMicrophone && (
         <div className="space-y-2">
           <div className="flex items-center gap-2">
