@@ -4,19 +4,21 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
+use tauri_plugin_global_shortcut::{GlobalShortcut, Shortcut};
 use tokio::time::{sleep, Duration};
 
 use crate::window;
 // State for registered shortcuts
 pub struct RegisteredShortcuts {
     pub shortcuts: Mutex<HashMap<String, String>>, // action_id -> shortcut_key
+    update_lock: Mutex<()>,
 }
 
 impl Default for RegisteredShortcuts {
     fn default() -> Self {
         RegisteredShortcuts {
             shortcuts: Mutex::new(HashMap::new()),
+            update_lock: Mutex::new(()),
         }
     }
 }
@@ -250,7 +252,18 @@ pub fn update_shortcuts<R: Runtime>(
     app: AppHandle<R>,
     config: ShortcutsConfig,
 ) -> Result<(), String> {
-    eprintln!("Updating shortcuts with {} bindings", config.bindings.len());
+    let global_shortcut = app
+        .try_state::<GlobalShortcut<R>>()
+        .ok_or_else(|| "Global shortcut plugin is not initialized yet".to_string())?;
+
+    let state = app.state::<RegisteredShortcuts>();
+    let _update_guard = match state.update_lock.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            eprintln!("Shortcut update mutex poisoned, recovering...");
+            poisoned.into_inner()
+        }
+    };
 
     let mut shortcuts_to_register = Vec::new();
 
@@ -311,11 +324,32 @@ pub fn update_shortcuts<R: Runtime>(
         }
     }
 
+    let desired_shortcuts: HashMap<String, String> = shortcuts_to_register
+        .iter()
+        .map(|(action_id, shortcut_str, _)| (action_id.clone(), shortcut_str.clone()))
+        .collect();
+    {
+        let registered = match state.shortcuts.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                eprintln!("Mutex poisoned while comparing shortcuts, recovering...");
+                poisoned.into_inner()
+            }
+        };
+
+        if *registered == desired_shortcuts {
+            eprintln!("Shortcut configuration unchanged; skipping update");
+            return Ok(());
+        }
+    }
+
+    eprintln!("Updating shortcuts with {} bindings", config.bindings.len());
+
     // First, stop any ongoing window movement
     stop_all_move_windows(&app);
 
     // Then, unregister all existing shortcuts
-    unregister_all_shortcuts(&app)?;
+    unregister_all_shortcuts(&app, &global_shortcut)?;
 
     // Now register all new shortcuts
     let mut successfully_registered = HashMap::new();
@@ -323,7 +357,7 @@ pub fn update_shortcuts<R: Runtime>(
     let mut registration_failures: Vec<(String, String, String)> = Vec::new();
 
     for (action_id, shortcut_str, shortcut) in shortcuts_to_register {
-        match app.global_shortcut().register(shortcut) {
+        match global_shortcut.register(shortcut) {
             Ok(_) => {
                 eprintln!("Registered shortcut: {} -> {}", action_id, shortcut_str);
                 successfully_registered.insert(action_id, shortcut_str);
@@ -372,7 +406,10 @@ pub fn update_shortcuts<R: Runtime>(
 }
 
 /// Unregister all currently registered shortcuts
-fn unregister_all_shortcuts<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+fn unregister_all_shortcuts<R: Runtime>(
+    app: &AppHandle<R>,
+    global_shortcut: &GlobalShortcut<R>,
+) -> Result<(), String> {
     let state = app.state::<RegisteredShortcuts>();
     let registered = match state.shortcuts.lock() {
         Ok(guard) => guard,
@@ -384,7 +421,7 @@ fn unregister_all_shortcuts<R: Runtime>(app: &AppHandle<R>) -> Result<(), String
 
     for (action_id, shortcut_str) in registered.iter() {
         if let Ok(shortcut) = shortcut_str.parse::<Shortcut>() {
-            match app.global_shortcut().unregister(shortcut) {
+            match global_shortcut.unregister(shortcut) {
                 Ok(_) => {
                     eprintln!("Unregistered shortcut: {} -> {}", action_id, shortcut_str);
                 }
@@ -396,6 +433,31 @@ fn unregister_all_shortcuts<R: Runtime>(app: &AppHandle<R>) -> Result<(), String
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tauri::test::{mock_builder, mock_context, noop_assets};
+
+    #[test]
+    fn update_shortcuts_returns_error_when_plugin_state_is_missing() {
+        let app = mock_builder()
+            .build(mock_context(noop_assets()))
+            .expect("mock app should build");
+
+        let result = update_shortcuts(
+            app.handle().clone(),
+            ShortcutsConfig {
+                bindings: HashMap::new(),
+            },
+        );
+
+        assert_eq!(
+            result,
+            Err("Global shortcut plugin is not initialized yet".to_string())
+        );
+    }
 }
 
 /// Tauri command to check if shortcuts are registered
