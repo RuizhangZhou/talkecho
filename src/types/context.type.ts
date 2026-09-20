@@ -1,5 +1,5 @@
 ﻿import { Dispatch, SetStateAction } from "react";
-import { ScreenshotConfig, TYPE_PROVIDER } from "@/types";
+import { ProviderSelection, ScreenshotConfig, TYPE_PROVIDER } from "@/types";
 import { CursorType, CustomizableState } from "@/lib/storage";
 
 export type IContextType = {
@@ -7,41 +7,14 @@ export type IContextType = {
   setSystemPrompt: Dispatch<SetStateAction<string>>;
   allAiProviders: TYPE_PROVIDER[];
   customAiProviders: TYPE_PROVIDER[];
-  selectedAIProvider: {
-    provider: string;
-    variables: Record<string, string>;
-  };
-  onSetSelectedAIProvider: ({
-    provider,
-    variables,
-  }: {
-    provider: string;
-    variables: Record<string, string>;
-  }) => void;
+  selectedAIProvider: ProviderSelection;
+  onSetSelectedAIProvider: (selection: ProviderSelection) => void;
   allSttProviders: TYPE_PROVIDER[];
   customSttProviders: TYPE_PROVIDER[];
-  selectedSttProvider: {
-    provider: string;
-    variables: Record<string, string>;
-  };
-  selectedDictationSttProvider: {
-    provider: string;
-    variables: Record<string, string>;
-  };
-  onSetSelectedSttProvider: ({
-    provider,
-    variables,
-  }: {
-    provider: string;
-    variables: Record<string, string>;
-  }) => void;
-  onSetSelectedDictationSttProvider: ({
-    provider,
-    variables,
-  }: {
-    provider: string;
-    variables: Record<string, string>;
-  }) => void;
+  selectedSttProvider: ProviderSelection;
+  selectedDictationSttProvider: ProviderSelection;
+  onSetSelectedSttProvider: (selection: ProviderSelection) => void;
+  onSetSelectedDictationSttProvider: (selection: ProviderSelection) => void;
   sttLanguage: string;
   onSetSttLanguage: (language: string) => void;
   dictationSttLanguage: string;

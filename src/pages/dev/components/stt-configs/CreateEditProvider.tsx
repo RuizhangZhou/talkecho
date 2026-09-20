@@ -120,13 +120,15 @@ export const CreateEditProvider = ({
               <div className="bg-muted/50 p-4 rounded-lg space-y-4">
                 <div className="bg-card border p-3 rounded-lg">
                   <p className="text-sm font-medium text-primary mb-2">
-                    💡 Important: You can add custom variables or directly
-                    include your API keys/values
+                    💡 Important: Keep credentials out of the cURL template
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    No need to enter variables separately when selecting the
-                    provider - you can embed them directly in the curl command
-                    (e.g., replace YOUR_API_KEY with your actual key or use{" "}
+                    Use{" "}
+                    <code className="bg-muted px-1 rounded text-xs">
+                      {"{{API_KEY}}"}
+                    </code>{" "}
+                    for credentials. After saving and selecting the provider,
+                    enter the real key in the separate API Key field. Use{" "}
                     <code className="bg-muted px-1 rounded text-xs">
                       {"{{MODEL}}"}
                     </code>{" "}
@@ -153,11 +155,11 @@ export const CreateEditProvider = ({
                 <div className="space-y-3">
                   <p className="text-sm text-muted-foreground">
                     <strong className="text-foreground">Quick Setup:</strong>{" "}
-                    Replace{" "}
+                    Put{" "}
                     <code className="bg-muted px-1 rounded text-xs">
-                      YOUR_API_KEY
+                      {"{{API_KEY}}"}
                     </code>{" "}
-                    with your actual API key directly in the curl command.
+                    in the cURL command; plaintext credentials are rejected.
                   </p>
                   <p className="text-sm text-muted-foreground">
                     <strong className="text-foreground">

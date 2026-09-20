@@ -1,8 +1,11 @@
-import { Button, Header, Input, Selection, TextInput } from "@/components";
-import { extractVariables } from "@/lib";
+import { Header, SecretInput, Selection, TextInput } from "@/components";
+import {
+  extractVariables,
+  isSecretVariableKey,
+  providerSecretRef,
+} from "@/lib";
 import { UseSettingsReturn } from "@/types";
 import curl2Json, { ResultJSON } from "@bany/curl-to-json";
-import { KeyIcon, TrashIcon } from "lucide-react";
 import { useMemo } from "react";
 
 type ProviderSelection = UseSettingsReturn["selectedSttProvider"];
@@ -30,14 +33,12 @@ const ProviderEditor = ({
     return curl2Json(provider.curl) as ResultJSON;
   }, [provider?.curl]);
   const variables = provider?.curl ? extractVariables(provider.curl) : [];
-  const apiKeyVariable = variables.find((variable) => variable.key === "api_key");
+  const apiKeyVariable = variables.find((variable) =>
+    isSecretVariableKey(variable.key)
+  );
   const providerLabel = provider?.isCustom
     ? parsedProvider?.url || "Custom Provider"
     : provider?.id || "STT provider";
-  const apiKeyValue = apiKeyVariable
-    ? selectedProvider.variables?.[apiKeyVariable.key] || ""
-    : "";
-
   const setVariable = (key: string, value: string) => {
     onSetSelectedProvider({
       ...selectedProvider,
@@ -63,55 +64,30 @@ const ProviderEditor = ({
         <div className="space-y-2">
           <Header
             title="API Key"
-            description={`Enter your ${providerLabel} API key. It is stored locally and never shared.`}
+            description={`Enter your ${providerLabel} API key. TalkEcho stores it in your operating system's credential manager and never reads it back into this field.`}
           />
-          <div className="flex gap-2">
-            <Input
-              type="password"
-              placeholder="**********"
-              value={apiKeyValue}
-              onChange={(value) =>
-                setVariable(
-                  apiKeyVariable.key,
-                  typeof value === "string" ? value : value.target.value
-                )
-              }
-              onKeyDown={(event) =>
-                setVariable(
-                  apiKeyVariable.key,
-                  (event.target as HTMLInputElement).value
-                )
-              }
-              className="flex-1 h-11 border-1 border-input/50 focus:border-primary/50 transition-colors"
-            />
-            {apiKeyValue.trim() ? (
-              <Button
-                onClick={() => setVariable(apiKeyVariable.key, "")}
-                size="icon"
-                variant="destructive"
-                className="shrink-0 h-11 w-11"
-                title="Remove API Key"
-              >
-                <TrashIcon className="h-4 w-4" />
-              </Button>
-            ) : (
-              <Button
-                disabled
-                size="icon"
-                className="shrink-0 h-11 w-11"
-                title="Enter an API key"
-              >
-                <KeyIcon className="h-4 w-4" />
-              </Button>
-            )}
-          </div>
+          <SecretInput
+            secretRef={
+              selectedProvider.secretRef ||
+              providerSecretRef("stt", selectedProvider.provider)
+            }
+            onConfiguredChange={() =>
+              onSetSelectedProvider({
+                ...selectedProvider,
+                secretRef: providerSecretRef(
+                  "stt",
+                  selectedProvider.provider
+                ),
+              })
+            }
+          />
         </div>
       ) : null}
 
       {variables
         .filter(
           (variable) =>
-            variable.key !== apiKeyVariable?.key &&
+            !isSecretVariableKey(variable.key) &&
             variable.key.toUpperCase() !== "LANGUAGE"
         )
         .map((variable) => (

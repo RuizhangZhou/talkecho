@@ -1,5 +1,6 @@
 import { STORAGE_KEYS } from "@/config";
 import { TYPE_PROVIDER } from "@/types";
+import { providerSecretRef } from "../provider-secrets";
 
 export function getCustomAiProviders(): TYPE_PROVIDER[] {
   try {
@@ -41,6 +42,9 @@ export function addCustomAiProvider(
       ...newProvider,
       id,
       isCustom: true,
+      secretRef: newProvider.curl.includes("{{API_KEY}}")
+        ? providerSecretRef("ai", id)
+        : undefined,
     };
     providers.push(provider);
     setCustomAiProviders(providers);
@@ -59,7 +63,13 @@ export function updateCustomAiProvider(
     const providers = getCustomAiProviders();
     const index = providers.findIndex((p) => p.id === id && p.isCustom);
     if (index === -1) return false;
-    providers[index] = { ...providers[index], ...updates };
+    providers[index] = {
+      ...providers[index],
+      ...updates,
+      secretRef: (updates.curl || providers[index].curl).includes("{{API_KEY}}")
+        ? providerSecretRef("ai", id)
+        : undefined,
+    };
     setCustomAiProviders(providers);
     return true;
   } catch (error) {

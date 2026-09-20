@@ -4,7 +4,14 @@
   SPEECH_TO_TEXT_PROVIDERS,
   STORAGE_KEYS,
 } from "@/config";
-import { getPlatform, safeLocalStorage, trackAppStart } from "@/lib";
+import {
+  getPlatform,
+  isSecretVariableKey,
+  migrateLegacyProviderSecrets,
+  providerSecretRef,
+  safeLocalStorage,
+  trackAppStart,
+} from "@/lib";
 import { getShortcutsConfig } from "@/lib/storage";
 import {
   getCustomizableState,
@@ -17,7 +24,12 @@ import {
   CursorType,
   updateCursorType,
 } from "@/lib/storage";
-import { IContextType, ScreenshotConfig, TYPE_PROVIDER } from "@/types";
+import {
+  IContextType,
+  ProviderSelection,
+  ScreenshotConfig,
+  TYPE_PROVIDER,
+} from "@/types";
 import curl2Json from "@bany/curl-to-json";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -84,7 +96,13 @@ const sanitizeProviderVariables = (variables: unknown): ProviderVariables => {
 
   const clean = createNullProtoObject<ProviderVariables>();
   for (const [key, value] of Object.entries(variables as Record<string, unknown>)) {
-    if (!key || typeof key !== "string" || isPrototypePollutionKey(key)) continue;
+    if (
+      !key ||
+      typeof key !== "string" ||
+      isPrototypePollutionKey(key) ||
+      isSecretVariableKey(key)
+    )
+      continue;
     if (typeof value === "string") {
       clean[key] = value;
     }
@@ -159,10 +177,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const [customAiProviders, setCustomAiProviders] = useState<TYPE_PROVIDER[]>(
     []
   );
-  const [selectedAIProvider, setSelectedAIProvider] = useState<{
-    provider: string;
-    variables: Record<string, string>;
-  }>({
+  const [selectedAIProvider, setSelectedAIProvider] =
+    useState<ProviderSelection>({
     provider: "",
     variables: {},
   });
@@ -171,18 +187,13 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const [customSttProviders, setCustomSttProviders] = useState<TYPE_PROVIDER[]>(
     []
   );
-  const [selectedSttProvider, setSelectedSttProvider] = useState<{
-    provider: string;
-    variables: Record<string, string>;
-  }>({
+  const [selectedSttProvider, setSelectedSttProvider] =
+    useState<ProviderSelection>({
     provider: "",
     variables: {},
   });
   const [selectedDictationSttProvider, setSelectedDictationSttProvider] =
-    useState<{
-      provider: string;
-      variables: Record<string, string>;
-    }>({
+    useState<ProviderSelection>({
       provider: "",
       variables: {},
     });
@@ -397,8 +408,18 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   // Load data on mount
   useEffect(() => {
     const initializeApp = async () => {
-      // Load license and data
+      // Migrate legacy plaintext credentials before provider data enters state.
       await getActiveLicenseStatus();
+      try {
+        await migrateLegacyProviderSecrets();
+      } catch {
+        console.error(
+          "Provider credential migration could not be completed; provider configuration was not loaded."
+        );
+        return;
+      }
+
+      loadData();
 
       // Track app start
       try {
@@ -411,9 +432,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         console.debug("Failed to track app start:", error);
       }
     };
-    // Load data
-    loadData();
-    initializeApp();
+    void initializeApp();
   }, []);
 
   // Handle customizable settings on state changes
@@ -605,10 +624,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const onSetSelectedAIProvider = ({
     provider,
     variables,
-  }: {
-    provider: string;
-    variables: Record<string, string>;
-  }) => {
+    secretRef,
+  }: ProviderSelection) => {
     if (provider && !allAiProviders.some((p) => p.id === provider)) {
       console.warn(`Invalid AI provider ID: ${provider}`);
       return;
@@ -636,17 +653,25 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       setProviderVariablesById(variablesByIdKey, variablesById);
     }
 
-    setSelectedAIProvider((prev) => ({ ...prev, provider, variables: nextVariables }));
+    const needsSecret = allAiProviders
+      .find((item) => item.id === provider)
+      ?.curl.includes("{{API_KEY}}");
+    setSelectedAIProvider((prev) => ({
+      ...prev,
+      provider,
+      variables: nextVariables,
+      secretRef:
+        secretRef ||
+        (needsSecret && provider ? providerSecretRef("ai", provider) : undefined),
+    }));
   };
 
   // Setter for selected STT with validation
   const onSetSelectedSttProvider = ({
     provider,
     variables,
-  }: {
-    provider: string;
-    variables: Record<string, string>;
-  }) => {
+    secretRef,
+  }: ProviderSelection) => {
     if (provider && !allSttProviders.some((p) => p.id === provider)) {
       console.warn(`Invalid STT provider ID: ${provider}`);
       return;
@@ -674,11 +699,23 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       setProviderVariablesById(variablesByIdKey, variablesById);
     }
 
-    setSelectedSttProvider((prev) => ({ ...prev, provider, variables: nextVariables }));
+    const needsSecret = allSttProviders
+      .find((item) => item.id === provider)
+      ?.curl.includes("{{API_KEY}}");
+    const nextSecretRef =
+      secretRef ||
+      (needsSecret && provider ? providerSecretRef("stt", provider) : undefined);
+    setSelectedSttProvider((prev) => ({
+      ...prev,
+      provider,
+      variables: nextVariables,
+      secretRef: nextSecretRef,
+    }));
     if (selectedDictationSttProvider.provider === provider) {
       setSelectedDictationSttProvider((prev) => ({
         ...prev,
         variables: nextVariables,
+        secretRef: nextSecretRef,
       }));
     }
   };
@@ -686,10 +723,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const onSetSelectedDictationSttProvider = ({
     provider,
     variables,
-  }: {
-    provider: string;
-    variables: Record<string, string>;
-  }) => {
+    secretRef,
+  }: ProviderSelection) => {
     if (provider && !allSttProviders.some((p) => p.id === provider)) {
       console.warn(`Invalid dictation STT provider ID: ${provider}`);
       return;
@@ -715,15 +750,23 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       setProviderVariablesById(variablesByIdKey, variablesById);
     }
 
+    const needsSecret = allSttProviders
+      .find((item) => item.id === provider)
+      ?.curl.includes("{{API_KEY}}");
+    const nextSecretRef =
+      secretRef ||
+      (needsSecret && provider ? providerSecretRef("stt", provider) : undefined);
     setSelectedDictationSttProvider((prev) => ({
       ...prev,
       provider,
       variables: nextVariables,
+      secretRef: nextSecretRef,
     }));
     if (selectedSttProvider.provider === provider) {
       setSelectedSttProvider((prev) => ({
         ...prev,
         variables: nextVariables,
+        secretRef: nextSecretRef,
       }));
     }
   };

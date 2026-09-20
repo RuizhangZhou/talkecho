@@ -1,4 +1,4 @@
-import { TYPE_PROVIDER } from "./provider.type";
+import { ProviderSelection, TYPE_PROVIDER } from "./provider.type";
 import { ScreenshotConfig, ScreenshotMode } from "./settings";
 
 export interface UseSettingsReturn {
@@ -11,27 +11,12 @@ export interface UseSettingsReturn {
   handleScreenshotEnabledChange: (enabled: boolean) => void;
   allAiProviders: TYPE_PROVIDER[];
   allSttProviders: TYPE_PROVIDER[];
-  selectedAIProvider: { provider: string; variables: Record<string, string> };
-  selectedSttProvider: {
-    provider: string;
-    variables: Record<string, string>;
-  };
-  selectedDictationSttProvider: {
-    provider: string;
-    variables: Record<string, string>;
-  };
-  onSetSelectedAIProvider: (provider: {
-    provider: string;
-    variables: Record<string, string>;
-  }) => void;
-  onSetSelectedSttProvider: (provider: {
-    provider: string;
-    variables: Record<string, string>;
-  }) => void;
-  onSetSelectedDictationSttProvider: (provider: {
-    provider: string;
-    variables: Record<string, string>;
-  }) => void;
+  selectedAIProvider: ProviderSelection;
+  selectedSttProvider: ProviderSelection;
+  selectedDictationSttProvider: ProviderSelection;
+  onSetSelectedAIProvider: (provider: ProviderSelection) => void;
+  onSetSelectedSttProvider: (provider: ProviderSelection) => void;
+  onSetSelectedDictationSttProvider: (provider: ProviderSelection) => void;
   sttLanguage: string;
   onSetSttLanguage: (language: string) => void;
   dictationSttLanguage: string;

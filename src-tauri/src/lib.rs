@@ -1,9 +1,11 @@
-﻿// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
+// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 mod activate;
 mod api;
 mod capture;
 mod db;
 mod dictation;
+mod provider_http;
+mod secrets;
 mod shortcuts;
 mod tray;
 mod window;
@@ -93,8 +95,6 @@ pub fn run() {
         )
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_http::init())
-        .plugin(tauri_plugin_keychain::init())
         .plugin(tauri_plugin_shell::init()) // Add shell plugin
         .plugin(posthog_init(PostHogConfig {
             api_key: posthog_api_key,
@@ -144,6 +144,12 @@ pub fn run() {
             api::transcribe_audio,
             api::chat_stream_response,
             api::cancel_chat_stream,
+            provider_http::provider_http_request,
+            provider_http::provider_stream_request,
+            secrets::set_secret,
+            secrets::delete_secret,
+            secrets::has_secret,
+            secrets::migrate_provider_secrets,
             api::fetch_models,
             api::create_system_prompt,
             api::check_license_status,
@@ -254,4 +260,3 @@ fn init(app_handle: &AppHandle) {
 
     panel.set_delegate(delegate);
 }
-

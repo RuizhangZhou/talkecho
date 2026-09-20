@@ -1,5 +1,6 @@
 import { STORAGE_KEYS } from "@/config";
 import { TYPE_PROVIDER } from "@/types";
+import { providerSecretRef } from "../provider-secrets";
 
 export function getCustomSttProviders(): TYPE_PROVIDER[] {
   try {
@@ -37,6 +38,9 @@ export function addCustomSttProvider(
       ...newProvider,
       id,
       isCustom: true,
+      secretRef: newProvider.curl.includes("{{API_KEY}}")
+        ? providerSecretRef("stt", id)
+        : undefined,
     };
     providers.push(provider);
     setCustomSttProviders(providers);
@@ -55,7 +59,13 @@ export function updateCustomSttProvider(
     const providers = getCustomSttProviders();
     const index = providers.findIndex((p) => p.id === id && p.isCustom);
     if (index === -1) return false;
-    providers[index] = { ...providers[index], ...updates };
+    providers[index] = {
+      ...providers[index],
+      ...updates,
+      secretRef: (updates.curl || providers[index].curl).includes("{{API_KEY}}")
+        ? providerSecretRef("stt", id)
+        : undefined,
+    };
     setCustomSttProviders(providers);
     return true;
   } catch (error) {

@@ -3,7 +3,6 @@
   getByPath,
   blobToBase64,
 } from "./common.function";
-import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { invoke } from "@tauri-apps/api/core";
 
 import { TYPE_PROVIDER } from "@/types";
@@ -15,6 +14,7 @@ import {
   RequestFailure,
   runWithRetry,
 } from "./request-resilience";
+import { ProviderRequestBody, sendProviderRequest } from "@/lib";
 
 const DEFAULT_STT_TIMEOUT_MS = 30_000;
 const DEFAULT_STT_MAX_RETRIES = 1;
@@ -57,6 +57,7 @@ export interface STTParams {
   selectedProvider: {
     provider: string;
     variables: Record<string, string>;
+    secretRef?: string;
   };
   audio: File | Blob;
   language?: string;
@@ -294,16 +295,14 @@ export async function fetchSTT(params: STTParams): Promise<string> {
     }
 
     let finalHeaders = { ...headers };
-    let body: FormData | string | Blob;
+    let body: ProviderRequestBody;
+    const audioBase64 = await blobToBase64(audio);
 
     const isForm =
       provider.curl.includes("-F ") || provider.curl.includes("--form");
     if (isForm) {
-      const form = new FormData();
-      const freshBlob = new Blob([await audio.arrayBuffer()], {
-        type: audio.type,
-      });
-      form.append("file", freshBlob, "audio.wav");
+      const fields: Record<string, string> = {};
+      let fileField = "file";
       const headerKeys = Object.keys(headers).map((k) =>
         k.toUpperCase().replace(/[-_]/g, "")
       );
@@ -316,7 +315,7 @@ export async function fetchSTT(params: STTParams): Promise<string> {
             key.toUpperCase() === "AUDIO"
           )
             continue;
-          form.append(key.toLowerCase(), val as string | Blob);
+          fields[key.toLowerCase()] = JSON.stringify(val);
           continue;
         }
 
@@ -325,7 +324,10 @@ export async function fetchSTT(params: STTParams): Promise<string> {
           const [formKey, ...formValueParts] = val.split("=");
           const formValue = formValueParts.join("=");
 
-          if (formKey.toLowerCase() === "file") continue; // Already handled by form.append('file', audio)
+          if (formValue === "{{AUDIO}}") {
+            fileField = formKey;
+            continue;
+          }
 
           if (
             !formValue ||
@@ -333,44 +335,58 @@ export async function fetchSTT(params: STTParams): Promise<string> {
           )
             continue;
 
-          form.append(formKey, formValue);
+          fields[formKey] = formValue;
         } else {
-          if (key.toLowerCase() === "file") continue; // Already handled by form.append('file', audio)
+          if (val === "{{AUDIO}}") {
+            fileField = key;
+            continue;
+          }
           if (
             !val ||
             headerKeys.includes(key.toUpperCase()) ||
             key.toUpperCase() === "AUDIO"
           )
             continue;
-          form.append(key.toLowerCase(), val as string | Blob);
+          fields[key.toLowerCase()] = val;
         }
       }
       delete finalHeaders["Content-Type"];
-      body = form;
+      body = {
+        kind: "multipart",
+        fields,
+        fileField,
+        fileName: "audio.wav",
+        mimeType: audio.type || "audio/wav",
+        fileBase64: audioBase64,
+      };
     } else if (isBinaryUpload) {
-      // Deepgram-style: raw binary body
-      body = new Blob([await audio.arrayBuffer()], {
-        type: audio.type,
-      });
+      body = {
+        kind: "binary",
+        base64: audioBase64,
+        mimeType: audio.type || "audio/wav",
+      };
     } else {
       // Google-style: JSON payload with base64
-      allVariables.AUDIO = await blobToBase64(audio);
+      allVariables.AUDIO = audioBase64;
       const dataObj = curlJson.data ? { ...curlJson.data } : {};
-      body = JSON.stringify(deepVariableReplacer(dataObj, allVariables));
+      body = {
+        kind: "text",
+        content: JSON.stringify(deepVariableReplacer(dataObj, allVariables)),
+      };
     }
-
-    const fetchFunction = url?.includes("http") ? fetch : tauriFetch;
 
     // Send request
     const sttResponse = await runWithRetry(
       async ({ signal: attemptSignal }) => {
-        let result: Response;
+        let result;
         try {
-          result = await fetchFunction(url, {
+          result = await sendProviderRequest({
             method: curlJson.method || "POST",
-            headers: finalHeaders,
+            url,
+            headers: finalHeaders as Record<string, string>,
             body: curlJson.method === "GET" ? undefined : body,
-            signal: attemptSignal,
+            secretRef: selectedProvider.secretRef || provider.secretRef,
+            timeoutMs,
           });
         } catch (error) {
           throw normalizeRequestFailure(error, {
@@ -378,18 +394,21 @@ export async function fetchSTT(params: STTParams): Promise<string> {
           });
         }
 
-        if (!result.ok) {
-          const errorText = await result.text().catch(() => "");
+        if (attemptSignal.aborted) {
+          throw new DOMException("Request aborted", "AbortError");
+        }
+
+        if (result.status < 200 || result.status >= 300) {
           throw classifyHttpFailure(
             result.status,
             result.statusText,
-            errorText,
-            result.headers.get("Retry-After")
+            result.body,
+            result.retryAfter || null
           );
         }
         return {
           status: result.status,
-          text: await result.text(),
+          text: result.body,
         };
       },
       {
