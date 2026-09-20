@@ -11,7 +11,11 @@ use tauri::ipc::Channel;
 const API_KEY_PLACEHOLDER: &str = "{{API_KEY}}";
 
 #[derive(Debug, Deserialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum ProviderRequestBody {
     Text {
         content: String,
@@ -377,6 +381,43 @@ pub async fn provider_stream_request(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn accepts_camel_case_audio_body_fields_from_tauri() {
+        let multipart: ProviderRequestBody = serde_json::from_value(serde_json::json!({
+            "kind": "multipart",
+            "fields": {"model": "whisper-large-v3-turbo"},
+            "fileField": "file",
+            "fileName": "audio.wav",
+            "mimeType": "audio/wav",
+            "fileBase64": "ZGVtbw=="
+        }))
+        .unwrap();
+        assert!(matches!(
+            multipart,
+            ProviderRequestBody::Multipart {
+                file_field,
+                file_name,
+                mime_type,
+                file_base64,
+                ..
+            } if file_field == "file"
+                && file_name == "audio.wav"
+                && mime_type == "audio/wav"
+                && file_base64 == "ZGVtbw=="
+        ));
+
+        let binary: ProviderRequestBody = serde_json::from_value(serde_json::json!({
+            "kind": "binary",
+            "base64": "ZGVtbw==",
+            "mimeType": "audio/wav"
+        }))
+        .unwrap();
+        assert!(matches!(
+            binary,
+            ProviderRequestBody::Binary { mime_type, .. } if mime_type == "audio/wav"
+        ));
+    }
 
     #[test]
     fn rejects_plaintext_authorization_headers() {
