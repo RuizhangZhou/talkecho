@@ -7,7 +7,119 @@ import {
   HeadphonesIcon,
   MicIcon,
 } from "lucide-react";
-import { useState, useRef, useEffect } from "react";
+import { memo, useState, useRef, useEffect, useMemo } from "react";
+
+const MESSAGE_WINDOW_SIZE = 80;
+type ConversationMessage = ChatConversation["messages"][number];
+
+const DualTrackMessage = memo(({ message }: { message: ConversationMessage }) => {
+  const isManualSource = message.source === "manual";
+  const isRightSide =
+    message.source === "microphone" ||
+    (isManualSource && message.role === "user");
+  const isUser = message.role === "user";
+
+  const icon =
+    message.source === "microphone" ? (
+      isUser ? (
+        <MicIcon className="h-2.5 w-2.5 text-primary-foreground" />
+      ) : (
+        <BotIcon className="h-2.5 w-2.5 text-primary-foreground" />
+      )
+    ) : isManualSource ? (
+      <img
+        src="/images/talkecho.png"
+        alt="TalkEcho"
+        className="h-2.5 w-2.5 object-contain"
+      />
+    ) : isUser ? (
+      <HeadphonesIcon className="h-2.5 w-2.5 text-muted-foreground" />
+    ) : (
+      <BotIcon className="h-2.5 w-2.5 text-muted-foreground" />
+    );
+
+  const bubbleClass = isManualSource
+    ? isRightSide
+      ? "bg-purple-600 text-white border-purple-600"
+      : "bg-purple-50 text-purple-900 border border-purple-100"
+    : isRightSide
+    ? "bg-primary text-white border-primary"
+    : "bg-muted/50 text-foreground";
+  const avatarClass = isManualSource
+    ? isRightSide
+      ? "bg-purple-600"
+      : "bg-purple-100"
+    : isRightSide
+    ? "bg-primary"
+    : "bg-primary/10";
+
+  return (
+    <div
+      className={`flex gap-1.5 ${
+        isRightSide ? "justify-end" : "justify-start"
+      }`}
+    >
+      <div
+        className={`flex items-start gap-1.5 max-w-[95%] ${
+          isRightSide ? "flex-row-reverse" : "flex-row"
+        }`}
+      >
+        <div
+          className={`h-5 w-5 rounded-full ${avatarClass} flex items-center justify-center shrink-0`}
+        >
+          {icon}
+        </div>
+        <Card className={`px-3 py-2 ${bubbleClass}`}>
+          <div className="text-xs leading-relaxed whitespace-pre-wrap">
+            {message.content}
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+});
+DualTrackMessage.displayName = "DualTrackMessage";
+
+const HistoricalMessage = memo(
+  ({ message }: { message: ConversationMessage }) => {
+    const isManualSource = message.source === "manual";
+    return (
+      <div className="space-y-3 flex flex-row gap-2">
+        <div className="flex items-start gap-2">
+          <div
+            className={`h-6 w-6 rounded-full flex items-center justify-center ${
+              isManualSource ? "bg-purple-100" : "bg-muted"
+            }`}
+          >
+            {isManualSource ? (
+              <img
+                src="/images/talkecho.png"
+                alt="TalkEcho"
+                className="h-4 w-4 object-contain"
+              />
+            ) : message.role === "user" ? (
+              <HeadphonesIcon className="h-4 w-4 text-muted-foreground" />
+            ) : (
+              <BotIcon className="h-4 w-4 text-muted-foreground" />
+            )}
+          </div>
+        </div>
+        <Card
+          className={`px-3 py-2 ${
+            isManualSource
+              ? "bg-purple-50 border border-purple-100"
+              : "bg-transparent"
+          }`}
+        >
+          <p className="text-xs leading-relaxed whitespace-pre-wrap">
+            <Markdown>{message.content}</Markdown>
+          </p>
+        </Card>
+      </div>
+    );
+  }
+);
+HistoricalMessage.displayName = "HistoricalMessage";
 
 type Props = {
   lastTranscription: string;
@@ -29,12 +141,38 @@ export const OperationSection = ({
   isMicProcessing = false,
 }: Props) => {
   const [openConversation, setOpenConversation] = useState(true);
+  const [visibleMessageCount, setVisibleMessageCount] = useState(
+    MESSAGE_WINDOW_SIZE
+  );
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // 按时间排序所有消息（最新的在底部）
-  const sortedMessages = [...conversation.messages].sort(
-    (a, b) => a.timestamp - b.timestamp
+  const sortedMessages = useMemo(
+    () =>
+      [...conversation.messages].sort(
+        (left, right) => left.timestamp - right.timestamp
+      ),
+    [conversation.messages]
   );
+  const visibleDualTrackMessages = useMemo(
+    () => sortedMessages.slice(-visibleMessageCount),
+    [sortedMessages, visibleMessageCount]
+  );
+  const historicalMessages = useMemo(
+    () =>
+      conversation.messages
+        .slice(2)
+        .sort((left, right) => right.timestamp - left.timestamp),
+    [conversation.messages]
+  );
+  const visibleHistoricalMessages = useMemo(
+    () => historicalMessages.slice(0, visibleMessageCount),
+    [historicalMessages, visibleMessageCount]
+  );
+
+  useEffect(() => {
+    setVisibleMessageCount(MESSAGE_WINDOW_SIZE);
+  }, [conversation.id]);
 
   // 自动滚动到底部
   useEffect(() => {
@@ -104,79 +242,26 @@ export const OperationSection = ({
 
           {openConversation && (
             <div className="space-y-2">
-              {sortedMessages.map((message) => {
-                const isManualSource = message.source === "manual";
-                const isRightSide =
-                  message.source === "microphone" ||
-                  (isManualSource && message.role === "user");
-                const isUser = message.role === "user";
-
-                let icon;
-                if (message.source === "microphone") {
-                  icon = isUser ? (
-                    <MicIcon className="h-2.5 w-2.5 text-primary-foreground" />
-                  ) : (
-                    <BotIcon className="h-2.5 w-2.5 text-primary-foreground" />
-                  );
-                    } else if (isManualSource) {
-                      icon = (
-                        <img
-                          src="/images/talkecho.png"
-                          alt="TalkEcho"
-                          className="h-2.5 w-2.5 object-contain"
-                        />
-                      );
-                } else {
-                  icon = isUser ? (
-                    <HeadphonesIcon className="h-2.5 w-2.5 text-muted-foreground" />
-                  ) : (
-                    <BotIcon className="h-2.5 w-2.5 text-muted-foreground" />
-                  );
-                }
-
-                const bubbleClass = isManualSource
-                  ? isRightSide
-                    ? "bg-purple-600 text-white border-purple-600"
-                    : "bg-purple-50 text-purple-900 border border-purple-100"
-                  : isRightSide
-                  ? "bg-primary text-white border-primary"
-                  : "bg-muted/50 text-foreground";
-
-                const avatarClass = isManualSource
-                  ? isRightSide
-                    ? "bg-purple-600"
-                    : "bg-purple-100"
-                  : isRightSide
-                  ? "bg-primary"
-                  : "bg-primary/10";
-
-                return (
-                  <div
-                    key={message.id}
-                    className={`flex gap-1.5 ${
-                      isRightSide ? "justify-end" : "justify-start"
-                    }`}
-                  >
-                    <div
-                      className={`flex items-start gap-1.5 max-w-[95%] ${
-                        isRightSide ? "flex-row-reverse" : "flex-row"
-                      }`}
-                    >
-                      <div
-                        className={`h-5 w-5 rounded-full ${avatarClass} flex items-center justify-center shrink-0`}
-                      >
-                        {icon}
-                      </div>
-
-                      <Card className={`px-3 py-2 ${bubbleClass}`}>
-                        <div className="text-xs leading-relaxed whitespace-pre-wrap">
-                          {message.content}
-                        </div>
-                      </Card>
-                    </div>
-                  </div>
-                );
-              })}
+              {sortedMessages.length > visibleDualTrackMessages.length && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="w-full text-xs"
+                  onClick={() =>
+                    setVisibleMessageCount(
+                      (count) => count + MESSAGE_WINDOW_SIZE
+                    )
+                  }
+                >
+                  Show {Math.min(
+                    MESSAGE_WINDOW_SIZE,
+                    sortedMessages.length - visibleDualTrackMessages.length
+                  )} earlier messages
+                </Button>
+              )}
+              {visibleDualTrackMessages.map((message) => (
+                <DualTrackMessage key={message.id} message={message} />
+              ))}
 
               {(isAIProcessing || isMicProcessing) && (
                 <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground py-2">
@@ -224,45 +309,30 @@ export const OperationSection = ({
             </div>
           </div>
 
-          {openConversation &&
-            conversation.messages
-              .slice(2)
-              .sort((a, b) => b.timestamp - a.timestamp)
-              .map((message) => {
-                const isManualSource = message.source === "manual";
-                return (
-                  <div key={message.id} className="space-y-3 flex flex-row gap-2">
-                    <div className="flex items-start gap-2">
-                      <div
-                        className={`h-6 w-6 rounded-full flex items-center justify-center ${
-                          isManualSource ? "bg-purple-100" : "bg-muted"
-                        }`}
-                      >
-                            {isManualSource ? (
-                              <img
-                                src="/images/talkecho.png"
-                                alt="TalkEcho"
-                                className="h-4 w-4 object-contain"
-                              />
-                            ) : message.role === "user" ? (
-                          <HeadphonesIcon className="h-4 w-4 text-muted-foreground" />
-                        ) : (
-                          <BotIcon className="h-4 w-4 text-muted-foreground" />
-                        )}
-                      </div>
-                    </div>
-                    <Card
-                      className={`px-3 py-2 ${
-                        isManualSource ? "bg-purple-50 border border-purple-100" : "bg-transparent"
-                      }`}
-                    >
-                      <p className="text-xs leading-relaxed whitespace-pre-wrap">
-                        <Markdown>{message.content}</Markdown>
-                      </p>
-                    </Card>
-                  </div>
-                );
-              })}
+          {openConversation && (
+            <div className="space-y-2">
+              {visibleHistoricalMessages.map((message) => (
+                <HistoricalMessage key={message.id} message={message} />
+              ))}
+              {historicalMessages.length > visibleHistoricalMessages.length && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="w-full text-xs"
+                  onClick={() =>
+                    setVisibleMessageCount(
+                      (count) => count + MESSAGE_WINDOW_SIZE
+                    )
+                  }
+                >
+                  Show {Math.min(
+                    MESSAGE_WINDOW_SIZE,
+                    historicalMessages.length - visibleHistoricalMessages.length
+                  )} older messages
+                </Button>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

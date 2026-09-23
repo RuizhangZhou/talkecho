@@ -4,6 +4,12 @@ export const DEFAULT_CONTEXT_WINDOW_TOKENS = 16_000;
 export const DEFAULT_OUTPUT_RESERVE_TOKENS = 1_024;
 export const DEFAULT_MEETING_CONTEXT_TOKENS = 2_000;
 
+export function sortMessagesChronologically<T extends { timestamp: number }>(
+  messages: T[]
+): T[] {
+  return [...messages].sort((left, right) => left.timestamp - right.timestamp);
+}
+
 export function estimateTextTokens(text: string): number {
   let asciiCharacters = 0;
   let nonAsciiTokens = 0;
@@ -121,6 +127,7 @@ export function buildMeetingReferenceContext(
   newestFirstMessages: Array<{
     role: "system" | "user" | "assistant";
     content: string;
+    source?: "system_audio" | "microphone" | "manual";
   }>,
   tokenBudget = DEFAULT_MEETING_CONTEXT_TOKENS
 ): {
@@ -129,7 +136,10 @@ export function buildMeetingReferenceContext(
   omittedUtterances: number;
 } {
   const utterances = newestFirstMessages.filter(
-    (message) => message.role === "user" && Boolean(message.content.trim())
+    (message) =>
+      message.role === "user" &&
+      message.source !== "manual" &&
+      Boolean(message.content.trim())
   );
   const selected: string[] = [];
   let estimatedTokens = 0;

@@ -59,7 +59,7 @@ Provider setup now lives in **TalkEcho -> Dev Space**, where every AI/STT provid
 
 ### Meeting request resilience
 
-Meeting audio is processed in a bounded FIFO queue so speech segments keep their order and cannot create an unbounded request backlog. STT requests time out and retry once only for transient network/rate-limit/server failures. AI requests have both a total timeout and a stream-inactivity timeout; an AI request is retried only if it failed before producing any response text. Authentication, malformed-request, and context-window errors are surfaced without retrying.
+Meeting audio is processed in capture order with one active batch and one coalescing pending batch. New speech extends the pending batch instead of creating another AI request or being dropped at a fixed queue limit. Once promoted, its transcripts are combined into one AI request so the pipeline can catch up while preserving every accepted segment. The overlay shows an adaptive backlog estimate based on observed processing time. STT requests time out and retry once only for transient network/rate-limit/server failures. AI requests have both a total timeout and a stream-inactivity timeout; an AI request is retried only if it failed before producing any response text. Authentication, malformed-request, and context-window errors are surfaced without retrying.
 
 For long conversations, configure **Context Window Tokens** and **Output Token Reserve** on a custom AI provider in Dev Space. Instant Ask keeps the newest history that fits that budget. Automatic meeting responses use a smaller recent window of raw speech as reference and do not resend earlier AI answers, reducing latency and token cost while retaining local meeting continuity.
 

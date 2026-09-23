@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   classifyHttpFailure,
+  CoalescingTaskQueue,
   RequestFailure,
   runWithRetry,
-  SerialTaskQueue,
 } from "./request-resilience";
 
 describe("request failure classification", () => {
@@ -87,48 +87,67 @@ describe("runWithRetry", () => {
   });
 });
 
-describe("SerialTaskQueue", () => {
-  it("preserves FIFO order and continues after a failed task", async () => {
-    const order: number[] = [];
-    const queue = new SerialTaskQueue(4);
-    const first = queue.enqueue(async () => {
-      order.push(1);
-      throw new Error("expected failure");
-    });
-    const second = queue.enqueue(async () => {
-      order.push(2);
-      return "second";
-    });
-
-    await expect(first).rejects.toThrow("expected failure");
-    await expect(second).resolves.toBe("second");
-    expect(order).toEqual([1, 2]);
-  });
-
-  it("rejects excess work instead of growing without bounds", async () => {
+describe("CoalescingTaskQueue", () => {
+  it("keeps one pending batch and appends newer work in FIFO order", async () => {
     let release!: () => void;
-    const queue = new SerialTaskQueue(1);
-    const active = queue.enqueue(
-      () => new Promise<void>((resolve) => (release = resolve))
-    );
+    const batches: number[][] = [];
+    const queue = new CoalescingTaskQueue<number>(async (items) => {
+      batches.push(items);
+      if (items[0] === 1) {
+        await new Promise<void>((resolve) => (release = resolve));
+      }
+    });
 
-    await expect(queue.enqueue(async () => undefined)).rejects.toMatchObject({
-      kind: "queue_full",
+    const first = queue.enqueue(1);
+    const pendingBatch = queue.enqueueBatch([2, 3]);
+
+    expect(queue.snapshot).toMatchObject({
+      activeItems: 1,
+      pendingItems: 2,
+      totalItems: 3,
     });
     release();
-    await active;
+    await Promise.all([first, pendingBatch]);
+
+    expect(batches).toEqual([[1], [2, 3]]);
+    expect(queue.depth).toBe(0);
   });
 
-  it("cancels waiting tasks while allowing the active task to unwind", async () => {
+  it("promotes the pending batch after an active batch fails", async () => {
     let release!: () => void;
-    const queue = new SerialTaskQueue(3);
-    const active = queue.enqueue(
-      () => new Promise<void>((resolve) => (release = resolve))
-    );
-    const waiting = queue.enqueue(async () => "never runs");
+    const batches: number[][] = [];
+    const queue = new CoalescingTaskQueue<number>(async (items) => {
+      batches.push(items);
+      if (items[0] === 1) {
+        await new Promise<void>((resolve) => (release = resolve));
+        throw new Error("expected failure");
+      }
+    });
 
+    const active = queue.enqueue(1);
+    const pending = queue.enqueueBatch([2, 3]);
+    release();
+
+    await expect(active).rejects.toThrow("expected failure");
+    await expect(pending).resolves.toBeUndefined();
+    expect(batches).toEqual([[1], [2, 3]]);
+  });
+
+  it("cancels every item in the single pending batch", async () => {
+    let release!: () => void;
+    const queue = new CoalescingTaskQueue<number>(async (items) => {
+      if (items[0] === 1) {
+        await new Promise<void>((resolve) => (release = resolve));
+      }
+    });
+
+    const active = queue.enqueue(1);
+    const waitingA = queue.enqueue(2);
+    const waitingB = queue.enqueue(3);
     queue.cancelPending();
-    await expect(waiting).rejects.toMatchObject({ kind: "cancelled" });
+
+    await expect(waitingA).rejects.toMatchObject({ kind: "cancelled" });
+    await expect(waitingB).rejects.toMatchObject({ kind: "cancelled" });
     release();
     await active;
     expect(queue.depth).toBe(0);
