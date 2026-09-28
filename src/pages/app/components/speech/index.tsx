@@ -30,6 +30,7 @@ export const SystemAudio = (props: useAudioOverlayType) => {
     error,
     notice,
     queueDepth,
+    estimatedBacklogSeconds,
     setupRequired,
     startCapture,
     stopCapture,
@@ -104,6 +105,7 @@ export const SystemAudio = (props: useAudioOverlayType) => {
                 capturing={capturing}
                 notice={notice}
                 queueDepth={queueDepth}
+                estimatedBacklogSeconds={estimatedBacklogSeconds}
               />
 
               {/* Header - Hide when there are messages to save space */}

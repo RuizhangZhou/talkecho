@@ -8,7 +8,6 @@ export type RequestFailureKind =
   | "context_limit"
   | "invalid_request"
   | "malformed_response"
-  | "queue_full"
   | "unknown";
 
 export class RequestFailure extends Error {
@@ -309,73 +308,131 @@ export async function runWithRetry<T>(
   }
 }
 
-export class QueueFullError extends RequestFailure {
-  constructor(capacity: number) {
-    super(
-      `Meeting processing queue is full (${capacity}). The provider is not keeping up with incoming speech.`,
-      { kind: "queue_full" }
-    );
-    this.name = "QueueFullError";
-  }
+export interface CoalescingQueueSnapshot {
+  activeItems: number;
+  pendingItems: number;
+  totalItems: number;
+  averageItemDurationMs: number;
+  estimatedBacklogMs: number;
 }
 
-interface QueuedTask<T> {
-  run: () => Promise<T>;
-  resolve: (value: T) => void;
+interface CoalescingQueueEntry<T> {
+  item: T;
+  resolve: () => void;
   reject: (reason: unknown) => void;
 }
 
-export class SerialTaskQueue {
-  private readonly tasks: QueuedTask<unknown>[] = [];
-  private active = false;
+/**
+ * A serial queue with one mutable pending batch.
+ *
+ * Work that arrives while a batch is active is appended to the same pending
+ * batch instead of allocating another request slot. Once the active batch
+ * finishes, the pending batch is promoted atomically. This keeps ordering,
+ * avoids a fixed-capacity overflow, and gives the batch runner an opportunity
+ * to combine many small meeting segments into one downstream AI request.
+ */
+export class CoalescingTaskQueue<T> {
+  private activeBatch: CoalescingQueueEntry<T>[] | null = null;
+  private pendingBatch: CoalescingQueueEntry<T>[] = [];
+  private activeStartedAt = 0;
+  private averageItemDurationMs: number;
 
   constructor(
-    private readonly capacity: number,
-    private readonly onDepthChange?: (depth: number) => void
-  ) {}
-
-  get depth(): number {
-    return this.tasks.length + (this.active ? 1 : 0);
+    private readonly runBatch: (items: T[]) => Promise<void>,
+    private readonly onSnapshot?: (snapshot: CoalescingQueueSnapshot) => void,
+    initialItemDurationMs = 8_000
+  ) {
+    this.averageItemDurationMs = initialItemDurationMs;
   }
 
-  enqueue<T>(run: () => Promise<T>): Promise<T> {
-    if (this.depth >= this.capacity) {
-      return Promise.reject(new QueueFullError(this.capacity));
-    }
+  get depth(): number {
+    return (this.activeBatch?.length ?? 0) + this.pendingBatch.length;
+  }
 
-    const promise = new Promise<T>((resolve, reject) => {
-      this.tasks.push({ run, resolve, reject } as QueuedTask<unknown>);
-    });
-    this.emitDepth();
-    void this.drain();
-    return promise;
+  get snapshot(): CoalescingQueueSnapshot {
+    const activeItems = this.activeBatch?.length ?? 0;
+    const pendingItems = this.pendingBatch.length;
+    const elapsedMs = this.activeStartedAt
+      ? Math.max(0, Date.now() - this.activeStartedAt)
+      : 0;
+    const estimatedActiveMs = activeItems * this.averageItemDurationMs;
+    const remainingActiveMs = activeItems
+      ? Math.max(1_000, estimatedActiveMs - elapsedMs)
+      : 0;
+
+    return {
+      activeItems,
+      pendingItems,
+      totalItems: activeItems + pendingItems,
+      averageItemDurationMs: this.averageItemDurationMs,
+      estimatedBacklogMs:
+        remainingActiveMs + pendingItems * this.averageItemDurationMs,
+    };
+  }
+
+  enqueue(item: T): Promise<void> {
+    return this.enqueueBatch([item]);
+  }
+
+  enqueueBatch(items: T[]): Promise<void> {
+    if (items.length === 0) return Promise.resolve();
+
+    const entries: CoalescingQueueEntry<T>[] = [];
+    const promises = items.map(
+      (item) =>
+        new Promise<void>((resolve, reject) => {
+          entries.push({ item, resolve, reject });
+        })
+    );
+    if (this.activeBatch) {
+      // There is deliberately only one pending batch. Every newer item
+      // rewrites that batch by extending its ordered payload.
+      this.pendingBatch.push(...entries);
+    } else {
+      this.startBatch(entries);
+    }
+    this.emitSnapshot();
+    return Promise.all(promises).then(() => undefined);
   }
 
   cancelPending(reason = "Meeting processing stopped"): void {
     const failure = new RequestFailure(reason, { kind: "cancelled" });
-    for (const task of this.tasks.splice(0)) task.reject(failure);
-    this.emitDepth();
+    for (const entry of this.pendingBatch.splice(0)) entry.reject(failure);
+    this.emitSnapshot();
   }
 
-  private async drain(): Promise<void> {
-    if (this.active) return;
-    const task = this.tasks.shift();
-    if (!task) return;
+  private startBatch(entries: CoalescingQueueEntry<T>[]): void {
+    this.activeBatch = entries;
+    this.activeStartedAt = Date.now();
+    this.emitSnapshot();
+    void this.drain(entries);
+  }
 
-    this.active = true;
-    this.emitDepth();
+  private async drain(entries: CoalescingQueueEntry<T>[]): Promise<void> {
+    const startedAt = Date.now();
     try {
-      task.resolve(await task.run());
+      await this.runBatch(entries.map((entry) => entry.item));
+      for (const entry of entries) entry.resolve();
     } catch (error) {
-      task.reject(error);
+      for (const entry of entries) entry.reject(error);
     } finally {
-      this.active = false;
-      this.emitDepth();
-      void this.drain();
+      const observedPerItemMs = Math.max(
+        1,
+        (Date.now() - startedAt) / Math.max(1, entries.length)
+      );
+      // Smooth noisy provider timings while still adapting within a meeting.
+      this.averageItemDurationMs =
+        this.averageItemDurationMs * 0.75 + observedPerItemMs * 0.25;
+      this.activeBatch = null;
+      this.activeStartedAt = 0;
+
+      const nextBatch = this.pendingBatch.splice(0);
+      if (nextBatch.length > 0) this.startBatch(nextBatch);
+      else this.emitSnapshot();
     }
   }
 
-  private emitDepth(): void {
-    this.onDepthChange?.(this.depth);
+  private emitSnapshot(): void {
+    this.onSnapshot?.(this.snapshot);
   }
 }

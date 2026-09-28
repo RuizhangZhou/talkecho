@@ -25,7 +25,7 @@ interface DbMessage {
   content: string;
   timestamp: number;
   attached_files: string | null; // JSON string
-  source?: "system_audio" | "microphone" | null;
+  source?: "system_audio" | "microphone" | "manual" | null;
 }
 
 /**
@@ -254,7 +254,7 @@ export async function getConversationById(
 }
 
 /**
- * Update a conversation with transaction safety
+ * Incrementally synchronize a conversation without rewriting unchanged rows.
  */
 export async function updateConversation(
   conversation: ChatConversation
@@ -266,76 +266,86 @@ export async function updateConversation(
   const db = await getDatabase();
 
   try {
-    // Update conversation
     const updateResult = await db.execute(
       "UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?",
       [conversation.title, conversation.updatedAt, conversation.id]
     );
-
     if (updateResult.rowsAffected === 0) {
       throw new Error("Conversation not found");
     }
 
-    // Get existing messages for backup
     const existingMessages = await db.select<DbMessage[]>(
       "SELECT * FROM messages WHERE conversation_id = ?",
       [conversation.id]
     );
+    const existingById = new Map(
+      existingMessages.map((message) => [message.id, message])
+    );
+    const incomingIds = new Set<string>();
 
-    // Delete existing messages
-    await db.execute("DELETE FROM messages WHERE conversation_id = ?", [
-      conversation.id,
-    ]);
+    for (const message of conversation.messages) {
+      if (!validateMessage(message)) {
+        console.warn("Skipping invalid message in conversation update");
+        continue;
+      }
 
-    // Insert updated messages
-    try {
-      for (const message of conversation.messages) {
-        if (!validateMessage(message)) {
-          console.warn("Skipping invalid message in conversation update");
-          continue;
-        }
+      incomingIds.add(message.id);
+      const attachedFilesJson = message.attachedFiles
+        ? JSON.stringify(message.attachedFiles)
+        : null;
+      const source = message.source ?? null;
+      const existing = existingById.get(message.id);
+      const unchanged =
+        existing?.conversation_id === conversation.id &&
+        existing.role === message.role &&
+        existing.content === message.content &&
+        existing.timestamp === message.timestamp &&
+        existing.attached_files === attachedFilesJson &&
+        (existing.source ?? null) === source;
 
-        const attachedFilesJson = message.attachedFiles
-          ? JSON.stringify(message.attachedFiles)
-          : null;
+      if (unchanged) continue;
 
+      await db.execute(
+        `INSERT INTO messages
+          (id, conversation_id, role, content, timestamp, attached_files, source)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+          conversation_id = excluded.conversation_id,
+          role = excluded.role,
+          content = excluded.content,
+          timestamp = excluded.timestamp,
+          attached_files = excluded.attached_files,
+          source = excluded.source`,
+        [
+          message.id,
+          conversation.id,
+          message.role,
+          message.content,
+          message.timestamp,
+          attachedFilesJson,
+          source,
+        ]
+      );
+    }
+
+    // Deletions are uncommon, but retaining sync semantics keeps this function
+    // safe for chat editing while making the normal append path write only the
+    // newly added messages.
+    for (const existing of existingMessages) {
+      if (!incomingIds.has(existing.id)) {
         await db.execute(
-          "INSERT INTO messages (id, conversation_id, role, content, timestamp, attached_files, source) VALUES (?, ?, ?, ?, ?, ?, ?)",
-          [
-            message.id,
-            conversation.id,
-            message.role,
-            message.content,
-            message.timestamp,
-            attachedFilesJson,
-            message.source ?? null,
-          ]
+          "DELETE FROM messages WHERE id = ? AND conversation_id = ?",
+          [existing.id, conversation.id]
         );
       }
-    } catch (messageError) {
-      // Rollback: restore original messages
-      console.error(
-        "Failed to insert new messages, restoring backup:",
-        messageError
-      );
-      for (const msg of existingMessages) {
-        await db
-          .execute(
-            "INSERT INTO messages (id, conversation_id, role, content, timestamp, attached_files, source) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            [
-              msg.id,
-              msg.conversation_id,
-              msg.role,
-              msg.content,
-              msg.timestamp,
-              msg.attached_files,
-              msg.source ?? null,
-            ]
-          )
-          .catch(() => {});
-      }
-      throw messageError;
     }
+
+    // Message triggers also touch updated_at; restore the caller's canonical
+    // value in case an older edited message was the last row written.
+    await db.execute(
+      "UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?",
+      [conversation.title, conversation.updatedAt, conversation.id]
+    );
 
     return conversation;
   } catch (error) {
@@ -355,9 +365,13 @@ export async function saveConversation(
   }
 
   try {
-    const existing = await getConversationById(conversation.id);
+    const db = await getDatabase();
+    const existing = await db.select<Array<{ id: string }>>(
+      "SELECT id FROM conversations WHERE id = ? LIMIT 1",
+      [conversation.id]
+    );
 
-    if (existing) {
+    if (existing.length > 0) {
       return await updateConversation(conversation);
     } else {
       return await createConversation(conversation);

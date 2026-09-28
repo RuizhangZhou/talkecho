@@ -3,6 +3,7 @@ import {
   buildMeetingReferenceContext,
   estimateTextTokens,
   selectRecentHistory,
+  sortMessagesChronologically,
 } from "./context-budget";
 
 describe("context budgeting", () => {
@@ -39,7 +40,16 @@ describe("context budgeting", () => {
     const result = buildMeetingReferenceContext(
       [
         { role: "assistant", content: "translated answer" },
-        { role: "user", content: "latest raw utterance" },
+        {
+          role: "user",
+          content: "manual question must not leak into automatic context",
+          source: "manual",
+        },
+        {
+          role: "user",
+          content: "latest raw utterance",
+          source: "system_audio",
+        },
         { role: "user", content: "older raw utterance" },
       ],
       100
@@ -47,5 +57,19 @@ describe("context budgeting", () => {
 
     expect(result.context).toBe("older raw utterance\nlatest raw utterance");
     expect(result.context).not.toContain("translated answer");
+    expect(result.context).not.toContain("manual question");
+  });
+
+  it("orders manual history by timestamps instead of reversing message pairs", () => {
+    const newestFirstPairs = [
+      { role: "user", content: "question 2", timestamp: 30 },
+      { role: "assistant", content: "answer 2", timestamp: 31 },
+      { role: "user", content: "question 1", timestamp: 10 },
+      { role: "assistant", content: "answer 1", timestamp: 11 },
+    ];
+
+    expect(
+      sortMessagesChronologically(newestFirstPairs).map(({ content }) => content)
+    ).toEqual(["question 1", "answer 1", "question 2", "answer 2"]);
   });
 });
