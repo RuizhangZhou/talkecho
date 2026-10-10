@@ -26,7 +26,7 @@ export class RequestFailure extends Error {
       details?: string;
       retryAfterMs?: number;
       cause?: unknown;
-    }
+    },
   ) {
     super(message);
     if (options.cause !== undefined) {
@@ -45,7 +45,7 @@ const CONTEXT_LIMIT_PATTERN =
   /(context[_ -]?(window|length)|maximum context|too many tokens|token limit|prompt is too long|input.*too long)/i;
 const RATE_LIMIT_PATTERN = /(rate.?limit|too many requests|quota exceeded)/i;
 const TRANSIENT_PATTERN =
-  /(timed? ?out|timeout|connection (reset|closed|refused)|network|temporarily unavailable|socket|econn|fetch failed)/i;
+  /(timed? ?out|timeout|connection (reset|closed|refused)|could not connect|provider request failed|failed to read the provider response|network|temporarily unavailable|socket|econn|fetch failed)/i;
 
 /**
  * Parse a `Retry-After` header into milliseconds.
@@ -56,7 +56,7 @@ const TRANSIENT_PATTERN =
  * a rate-limited response with no header would be retried with no delay at all.
  */
 export function parseRetryAfterMs(
-  retryAfterHeader?: string | null
+  retryAfterHeader?: string | null,
 ): number | undefined {
   if (retryAfterHeader == null) return undefined;
   const raw = retryAfterHeader.trim();
@@ -78,7 +78,7 @@ export function classifyHttpFailure(
   status: number,
   statusText: string,
   body = "",
-  retryAfterHeader?: string | null
+  retryAfterHeader?: string | null,
 ): RequestFailure {
   const details = body.trim();
   const combined = `${statusText} ${details}`.trim();
@@ -86,13 +86,13 @@ export function classifyHttpFailure(
   if (CONTEXT_LIMIT_PATTERN.test(combined)) {
     return new RequestFailure(
       "The request exceeded the model context window. Reduce or summarize the conversation history.",
-      { kind: "context_limit", status, details }
+      { kind: "context_limit", status, details },
     );
   }
   if (status === 401 || status === 403) {
     return new RequestFailure(
       `Provider authentication failed (${status}). Check the API key and permissions.`,
-      { kind: "authentication", status, details }
+      { kind: "authentication", status, details },
     );
   }
   if (status === 408) {
@@ -113,19 +113,19 @@ export function classifyHttpFailure(
         retryable: true,
         details,
         retryAfterMs,
-      }
+      },
     );
   }
   if (status >= 500) {
     return new RequestFailure(
       `The provider is temporarily unavailable (${status}).`,
-      { kind: "provider", status, retryable: true, details }
+      { kind: "provider", status, retryable: true, details },
     );
   }
   if (status >= 400) {
     return new RequestFailure(
       `The provider rejected the request (${status}${statusText ? ` ${statusText}` : ""}).`,
-      { kind: "invalid_request", status, details }
+      { kind: "invalid_request", status, details },
     );
   }
   return new RequestFailure("The provider request failed.", {
@@ -137,7 +137,7 @@ export function classifyHttpFailure(
 
 export function normalizeRequestFailure(
   error: unknown,
-  options: { timedOut?: boolean; cancelled?: boolean } = {}
+  options: { timedOut?: boolean; cancelled?: boolean } = {},
 ): RequestFailure {
   if (error instanceof RequestFailure) return error;
 
@@ -163,14 +163,21 @@ export function normalizeRequestFailure(
   if (CONTEXT_LIMIT_PATTERN.test(message)) {
     return new RequestFailure(
       "The request exceeded the model context window. Reduce or summarize the conversation history.",
-      { kind: "context_limit", cause: error, details: message }
+      { kind: "context_limit", cause: error, details: message },
     );
   }
   if (RATE_LIMIT_PATTERN.test(message)) {
     return new RequestFailure(
       "The provider rate limit was reached. TalkEcho will retry briefly.",
-      { kind: "rate_limit", retryable: true, cause: error, details: message }
+      { kind: "rate_limit", retryable: true, cause: error, details: message },
     );
+  }
+  if (/timed? ?out|timeout/i.test(message)) {
+    return new RequestFailure("The request timed out.", {
+      kind: "timeout",
+      retryable: true,
+      cause: error,
+    });
   }
   if (TRANSIENT_PATTERN.test(message)) {
     return new RequestFailure(`Network request failed: ${message}`, {
@@ -196,13 +203,14 @@ export function formatRequestFailure(error: unknown): string {
 
 interface LinkedAbortContext {
   signal: AbortSignal;
+  abort: () => void;
   didTimeout: () => boolean;
   cleanup: () => void;
 }
 
 export function createLinkedAbortContext(
   parentSignal: AbortSignal | undefined,
-  timeoutMs: number
+  timeoutMs: number,
 ): LinkedAbortContext {
   const controller = new AbortController();
   let timedOut = false;
@@ -221,6 +229,7 @@ export function createLinkedAbortContext(
 
   return {
     signal: controller.signal,
+    abort: () => controller.abort(),
     didTimeout: () => timedOut,
     cleanup: () => {
       clearTimeout(timer);
@@ -231,7 +240,7 @@ export function createLinkedAbortContext(
 
 export async function delayWithSignal(
   delayMs: number,
-  signal?: AbortSignal
+  signal?: AbortSignal,
 ): Promise<void> {
   if (signal?.aborted) {
     throw new RequestFailure("The request was cancelled.", {
@@ -244,7 +253,7 @@ export async function delayWithSignal(
     const onAbort = () => {
       clearTimeout(timer);
       reject(
-        new RequestFailure("The request was cancelled.", { kind: "cancelled" })
+        new RequestFailure("The request was cancelled.", { kind: "cancelled" }),
       );
     };
     signal?.addEventListener("abort", onAbort, { once: true });
@@ -265,16 +274,22 @@ export async function runWithRetry<T>(
     maxDelayMs?: number;
     jitterMs?: number;
     onRetry?: (failure: RequestFailure, nextAttempt: number) => void;
-  }
+  },
 ): Promise<T> {
   const baseDelayMs = options.baseDelayMs ?? 500;
   const maxDelayMs = options.maxDelayMs ?? 30_000;
 
   for (let attempt = 0; ; attempt += 1) {
-    const abortContext = createLinkedAbortContext(options.signal, options.timeoutMs);
+    const abortContext = createLinkedAbortContext(
+      options.signal,
+      options.timeoutMs,
+    );
     let onAttemptAbort: (() => void) | undefined;
     try {
-      const operationPromise = operation({ attempt, signal: abortContext.signal });
+      const operationPromise = operation({
+        attempt,
+        signal: abortContext.signal,
+      });
       const abortPromise = new Promise<never>((_, reject) => {
         onAttemptAbort = () =>
           reject(new DOMException("Request aborted", "AbortError"));
@@ -314,12 +329,23 @@ export interface CoalescingQueueSnapshot {
   totalItems: number;
   averageItemDurationMs: number;
   estimatedBacklogMs: number;
+  oldestAgeMs: number;
 }
 
 interface CoalescingQueueEntry<T> {
   item: T;
+  weight: number;
+  enqueuedAt: number;
   resolve: () => void;
   reject: (reason: unknown) => void;
+}
+
+export interface CoalescingQueueOptions<T> {
+  maxBatchItems?: number;
+  maxBatchWeight?: number;
+  itemWeight?: (item: T) => number;
+  batchOverheadMs?: number;
+  timestamp?: (item: T) => number;
 }
 
 /**
@@ -340,7 +366,8 @@ export class CoalescingTaskQueue<T> {
   constructor(
     private readonly runBatch: (items: T[]) => Promise<void>,
     private readonly onSnapshot?: (snapshot: CoalescingQueueSnapshot) => void,
-    initialItemDurationMs = 8_000
+    initialItemDurationMs = 8_000,
+    private readonly options: CoalescingQueueOptions<T> = {},
   ) {
     this.averageItemDurationMs = initialItemDurationMs;
   }
@@ -355,7 +382,7 @@ export class CoalescingTaskQueue<T> {
     const elapsedMs = this.activeStartedAt
       ? Math.max(0, Date.now() - this.activeStartedAt)
       : 0;
-    const estimatedActiveMs = activeItems * this.averageItemDurationMs;
+    const estimatedActiveMs = this.estimateBatch(this.activeBatch ?? []);
     const remainingActiveMs = activeItems
       ? Math.max(1_000, estimatedActiveMs - elapsedMs)
       : 0;
@@ -366,7 +393,19 @@ export class CoalescingTaskQueue<T> {
       totalItems: activeItems + pendingItems,
       averageItemDurationMs: this.averageItemDurationMs,
       estimatedBacklogMs:
-        remainingActiveMs + pendingItems * this.averageItemDurationMs,
+        remainingActiveMs +
+        this.partition(this.pendingBatch).reduce(
+          (total, batch) => total + this.estimateBatch(batch),
+          0,
+        ),
+      oldestAgeMs: Math.max(
+        0,
+        ...[...(this.activeBatch ?? []), ...this.pendingBatch].map(
+          (entry) =>
+            Date.now() -
+            (this.options.timestamp?.(entry.item) ?? entry.enqueuedAt),
+        ),
+      ),
     };
   }
 
@@ -381,15 +420,22 @@ export class CoalescingTaskQueue<T> {
     const promises = items.map(
       (item) =>
         new Promise<void>((resolve, reject) => {
-          entries.push({ item, resolve, reject });
-        })
+          entries.push({
+            item,
+            weight: this.weight(item),
+            enqueuedAt: Date.now(),
+            resolve,
+            reject,
+          });
+        }),
     );
     if (this.activeBatch) {
       // There is deliberately only one pending batch. Every newer item
       // rewrites that batch by extending its ordered payload.
       this.pendingBatch.push(...entries);
     } else {
-      this.startBatch(entries);
+      this.pendingBatch.push(...entries);
+      this.promote();
     }
     this.emitSnapshot();
     return Promise.all(promises).then(() => undefined);
@@ -410,26 +456,75 @@ export class CoalescingTaskQueue<T> {
 
   private async drain(entries: CoalescingQueueEntry<T>[]): Promise<void> {
     const startedAt = Date.now();
+    let succeeded = false;
     try {
       await this.runBatch(entries.map((entry) => entry.item));
+      succeeded = true;
       for (const entry of entries) entry.resolve();
     } catch (error) {
       for (const entry of entries) entry.reject(error);
     } finally {
       const observedPerItemMs = Math.max(
         1,
-        (Date.now() - startedAt) / Math.max(1, entries.length)
+        (Date.now() - startedAt - (this.options.batchOverheadMs ?? 0)) /
+          Math.max(
+            1,
+            entries.reduce((sum, entry) => sum + entry.weight, 0),
+          ),
       );
       // Smooth noisy provider timings while still adapting within a meeting.
-      this.averageItemDurationMs =
-        this.averageItemDurationMs * 0.75 + observedPerItemMs * 0.25;
+      if (succeeded)
+        this.averageItemDurationMs =
+          this.averageItemDurationMs * 0.75 + observedPerItemMs * 0.25;
       this.activeBatch = null;
       this.activeStartedAt = 0;
 
-      const nextBatch = this.pendingBatch.splice(0);
-      if (nextBatch.length > 0) this.startBatch(nextBatch);
-      else this.emitSnapshot();
+      this.promote();
     }
+  }
+  private weight(item: T): number {
+    return Math.max(1, this.options.itemWeight?.(item) ?? 1);
+  }
+
+  private estimateBatch(entries: CoalescingQueueEntry<T>[]): number {
+    if (!entries.length) return 0;
+    return (
+      (this.options.batchOverheadMs ?? 0) +
+      entries.reduce(
+        (total, entry) => total + entry.weight * this.averageItemDurationMs,
+        0,
+      )
+    );
+  }
+
+  private partition(
+    entries: CoalescingQueueEntry<T>[],
+  ): CoalescingQueueEntry<T>[][] {
+    const batches: CoalescingQueueEntry<T>[][] = [];
+    let batch: CoalescingQueueEntry<T>[] = [];
+    let weight = 0;
+    for (const entry of entries) {
+      const nextWeight = entry.weight;
+      if (
+        batch.length &&
+        (batch.length >= (this.options.maxBatchItems ?? Infinity) ||
+          weight + nextWeight > (this.options.maxBatchWeight ?? Infinity))
+      ) {
+        batches.push(batch);
+        batch = [];
+        weight = 0;
+      }
+      batch.push(entry);
+      weight += nextWeight;
+    }
+    if (batch.length) batches.push(batch);
+    return batches;
+  }
+
+  private promote(): void {
+    const count = this.partition(this.pendingBatch)[0]?.length ?? 0;
+    if (count) this.startBatch(this.pendingBatch.splice(0, count));
+    else this.emitSnapshot();
   }
 
   private emitSnapshot(): void {

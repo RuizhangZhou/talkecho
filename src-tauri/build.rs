@@ -17,5 +17,15 @@ fn main() {
         println!("cargo:rustc-env=POSTHOG_API_KEY={}", posthog_api_key);
     }
 
-    tauri_build::build()
+    tauri_build::build();
+
+    // Tauri's binary resource does not cover the library unit-test executable.
+    // Its Windows UI dependencies import TaskDialogIndirect from Common Controls v6.
+    println!("cargo:rerun-if-env-changed=TALKECHO_TEST_MANIFEST");
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+        && std::env::var("TALKECHO_TEST_MANIFEST").as_deref() == Ok("1")
+    {
+        println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
+        println!("cargo:rustc-link-arg=/MANIFESTDEPENDENCY:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'");
+    }
 }

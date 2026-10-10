@@ -5,8 +5,84 @@ use reqwest::multipart::{Form, Part};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::future::Future;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use tauri::ipc::Channel;
+use tokio::sync::watch;
+
+type CancellationMap = Mutex<HashMap<String, watch::Sender<bool>>>;
+static CANCELLATIONS: OnceLock<CancellationMap> = OnceLock::new();
+static HTTP_CLIENT: OnceLock<Result<reqwest::Client, String>> = OnceLock::new();
+
+fn provider_client() -> Result<&'static reqwest::Client, String> {
+    HTTP_CLIENT
+        .get_or_init(|| {
+            reqwest::Client::builder()
+                .connect_timeout(Duration::from_secs(15))
+                .pool_idle_timeout(Duration::from_secs(90))
+                .build()
+                .map_err(|_| "Failed to initialize the provider HTTP client".to_string())
+        })
+        .as_ref()
+        .map_err(Clone::clone)
+}
+
+fn cancellations() -> &'static CancellationMap {
+    CANCELLATIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[tauri::command]
+pub fn prepare_provider_request() -> Result<String, String> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let (sender, _) = watch::channel(false);
+    cancellations()
+        .lock()
+        .map_err(|_| "Request registry unavailable")?
+        .insert(id.clone(), sender);
+    Ok(id)
+}
+
+#[tauri::command]
+pub fn cancel_provider_request(request_id: String) {
+    if let Ok(registry) = cancellations().lock() {
+        if let Some(sender) = registry.get(&request_id) {
+            sender.send_replace(true);
+        }
+    }
+}
+
+#[tauri::command]
+pub fn finish_provider_request(request_id: String) {
+    if let Ok(mut registry) = cancellations().lock() {
+        registry.remove(&request_id);
+    }
+}
+
+async fn with_cancellation<T>(
+    request_id: Option<String>,
+    operation: impl Future<Output = Result<T, String>>,
+) -> Result<T, String> {
+    let Some(id) = request_id else {
+        return operation.await;
+    };
+    let mut receiver = cancellations()
+        .lock()
+        .map_err(|_| "Request registry unavailable")?
+        .get(&id)
+        .ok_or("Request not registered")?
+        .subscribe();
+    tokio::select! {
+        biased;
+        _ = async {
+            loop {
+                if *receiver.borrow_and_update() { break; }
+                if receiver.changed().await.is_err() { break; }
+            }
+        } => Err("Provider request cancelled".to_string()),
+        result = operation => result,
+    }
+}
 
 const API_KEY_PLACEHOLDER: &str = "{{API_KEY}}";
 
@@ -233,12 +309,10 @@ async fn build_request(
     }
 
     let timeout = request.timeout_ms.unwrap_or(90_000).clamp(1_000, 300_000);
-    let client = reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(15))
-        .timeout(Duration::from_millis(timeout))
-        .build()
-        .map_err(|_| "Failed to initialize the provider HTTP client".to_string())?;
-    let mut builder = client.request(method, &url).headers(headers);
+    let mut builder = provider_client()?
+        .request(method, &url)
+        .headers(headers)
+        .timeout(Duration::from_millis(timeout));
 
     if let Some(body) = request.body {
         builder = match body {
@@ -297,7 +371,7 @@ async fn response_metadata(
     let body = response
         .text()
         .await
-        .map_err(|_| "Failed to read the provider response".to_string())?;
+        .map_err(|error| safe_request_error(&error))?;
     Ok(ProviderHttpResponse {
         status: status.as_u16(),
         status_text: status.canonical_reason().unwrap_or("").to_string(),
@@ -308,6 +382,13 @@ async fn response_metadata(
 
 #[tauri::command]
 pub async fn provider_http_request(
+    request: ProviderHttpRequest,
+    request_id: Option<String>,
+) -> Result<ProviderHttpResponse, String> {
+    with_cancellation(request_id, perform_http_request(request)).await
+}
+
+async fn perform_http_request(
     request: ProviderHttpRequest,
 ) -> Result<ProviderHttpResponse, String> {
     let (builder, secret) = build_request(request).await?;
@@ -320,6 +401,14 @@ pub async fn provider_http_request(
 
 #[tauri::command]
 pub async fn provider_stream_request(
+    request: ProviderHttpRequest,
+    on_chunk: Channel<String>,
+    request_id: Option<String>,
+) -> Result<ProviderHttpResponse, String> {
+    with_cancellation(request_id, perform_stream_request(request, on_chunk)).await
+}
+
+async fn perform_stream_request(
     request: ProviderHttpRequest,
     on_chunk: Channel<String>,
 ) -> Result<ProviderHttpResponse, String> {
@@ -346,7 +435,7 @@ pub async fn provider_stream_request(
     while let Some(chunk) = response
         .chunk()
         .await
-        .map_err(|_| "Failed to read the provider response stream".to_string())?
+        .map_err(|error| safe_request_error(&error))?
     {
         pending.extend_from_slice(&chunk);
         while let Some(newline) = pending.iter().position(|byte| *byte == b'\n') {
@@ -381,6 +470,100 @@ pub async fn provider_stream_request(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn cancellation_before_http_start_is_not_lost() {
+        let id = prepare_provider_request().unwrap();
+        cancel_provider_request(id.clone());
+        let mut started = false;
+        let result: Result<(), String> = with_cancellation(Some(id.clone()), async {
+            started = true;
+            Ok(())
+        })
+        .await;
+        assert_eq!(result.unwrap_err(), "Provider request cancelled");
+        assert!(!started);
+        finish_provider_request(id.clone());
+        assert!(!cancellations().lock().unwrap().contains_key(&id));
+    }
+
+    #[tokio::test]
+    async fn stalled_response_body_preserves_the_native_timeout_kind() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = server.local_addr().unwrap();
+        let server_task = tokio::spawn(async move {
+            let (mut socket, _) = server.accept().await.unwrap();
+            let mut buffer = [0; 4096];
+            socket.read(&mut buffer).await.unwrap();
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nx")
+                .await
+                .unwrap();
+            let _ = socket.read(&mut buffer).await;
+        });
+        let request = ProviderHttpRequest {
+            method: "GET".into(),
+            url: format!("http://{address}/timeout"),
+            headers: HashMap::new(),
+            body: None,
+            secret_ref: None,
+            timeout_ms: Some(1_000),
+        };
+        let result =
+            tokio::time::timeout(Duration::from_secs(5), provider_http_request(request, None))
+                .await
+                .unwrap();
+        assert_eq!(result.unwrap_err(), "Provider request timed out");
+        server_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn cancellation_closes_a_stalled_local_http_response() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = server.local_addr().unwrap();
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let server_task = tokio::spawn(async move {
+            let (mut socket, _) = server.accept().await.unwrap();
+            let mut buffer = [0; 4096];
+            socket.read(&mut buffer).await.unwrap();
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nx")
+                .await
+                .unwrap();
+            let _ = ready_tx.send(());
+            socket.read(&mut buffer).await.unwrap()
+        });
+        let id = prepare_provider_request().unwrap();
+        let request = ProviderHttpRequest {
+            method: "GET".into(),
+            url: format!("http://{address}/stalled"),
+            headers: HashMap::new(),
+            body: None,
+            secret_ref: None,
+            timeout_ms: Some(60_000),
+        };
+        let task = tokio::spawn(provider_http_request(request, Some(id.clone())));
+        tokio::time::timeout(Duration::from_secs(5), ready_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        cancel_provider_request(id.clone());
+        let result = tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.unwrap_err(), "Provider request cancelled");
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(5), server_task)
+                .await
+                .unwrap()
+                .unwrap(),
+            0
+        );
+        finish_provider_request(id);
+    }
 
     #[test]
     fn accepts_camel_case_audio_body_fields_from_tauri() {

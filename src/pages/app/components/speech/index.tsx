@@ -19,6 +19,7 @@ import { PermissionFlow } from "./PermissionFlow";
 import { useAudioOverlayType } from "@/hooks";
 import { useApp } from "@/contexts";
 import { StatusIndicator } from "./StatusIndicator";
+import { MeetingDiagnostics } from "./MeetingDiagnostics";
 
 export const SystemAudio = (props: useAudioOverlayType) => {
   const {
@@ -31,6 +32,9 @@ export const SystemAudio = (props: useAudioOverlayType) => {
     notice,
     queueDepth,
     estimatedBacklogSeconds,
+    oldestPendingSeconds,
+    recentMeetingErrors,
+    meetingTimings,
     setupRequired,
     startCapture,
     stopCapture,
@@ -106,7 +110,9 @@ export const SystemAudio = (props: useAudioOverlayType) => {
                 notice={notice}
                 queueDepth={queueDepth}
                 estimatedBacklogSeconds={estimatedBacklogSeconds}
+                oldestPendingSeconds={oldestPendingSeconds}
               />
+              <MeetingDiagnostics errors={recentMeetingErrors} timings={meetingTimings} />
 
               {/* Header - Hide when there are messages to save space */}
               {!lastTranscription && !lastAIResponse && (
@@ -219,7 +225,7 @@ export const SystemAudio = (props: useAudioOverlayType) => {
                     <div className="space-y-2 w-full">
                       <div>
                         <h3 className="font-semibold text-xs mb-1 text-red-700">
-                          Audio Capture Error
+                          Meeting Processing Error
                         </h3>
                       </div>
                       <div className="bg-red-50 border border-red-200 rounded-lg p-3">

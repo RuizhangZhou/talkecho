@@ -192,7 +192,7 @@ export async function* fetchAIResponse(params: {
   timeoutMs?: number;
   inactivityTimeoutMs?: number;
   maxRetries?: number;
-  onRetry?: (attempt: number, reason: string) => void;
+  onRetry?: (attempt: number, reason: string, failure: RequestFailure) => void;
 }): AsyncIterable<string> {
   try {
     const {
@@ -332,6 +332,7 @@ export async function* fetchAIResponse(params: {
     for (let attempt = 0; ; attempt += 1) {
       const abortContext = createLinkedAbortContext(signal, timeoutMs);
       let emittedContent = false;
+      let nativeStream: Promise<unknown> | undefined;
       try {
         const request: ProviderHttpRequest = {
           method: curlJson.method || "POST",
@@ -371,10 +372,10 @@ export async function* fetchAIResponse(params: {
             }
           };
 
-          void streamProviderRequest(request, (chunk) => {
+          nativeStream = streamProviderRequest(request, (chunk) => {
             chunks.push(chunk);
             lastActivity = Date.now();
-          })
+          }, abortContext.signal)
             .then((result) => {
               response = result;
             })
@@ -444,7 +445,7 @@ export async function* fetchAIResponse(params: {
           return;
         }
 
-        const response = await sendProviderRequest(request);
+        const response = await sendProviderRequest(request, abortContext.signal);
 
         if (response.status < 200 || response.status >= 300) {
           throw classifyHttpFailure(
@@ -479,17 +480,21 @@ export async function* fetchAIResponse(params: {
         yield String(content);
         return;
       } catch (error) {
+        // End the native attempt before retrying an inactive stream.
+        abortContext.abort();
+        await nativeStream;
         const failure = normalizeRequestFailure(error, {
           timedOut: abortContext.didTimeout(),
           cancelled: signal?.aborted,
         });
         if (!emittedContent && failure.retryable && attempt < maxRetries) {
-          onRetry?.(attempt + 1, failure.message);
-          await delayWithSignal(500 * 2 ** attempt, signal);
+          onRetry?.(attempt + 1, failure.message, failure);
+          await delayWithSignal(Math.min(failure.retryAfterMs ?? 500 * 2 ** attempt, 30_000), signal);
           continue;
         }
         throw failure;
       } finally {
+        abortContext.abort();
         abortContext.cleanup();
       }
     }

@@ -9,6 +9,7 @@ type Props = {
   notice: string;
   queueDepth: number;
   estimatedBacklogSeconds: number;
+  oldestPendingSeconds: number;
 };
 
 export const StatusIndicator = ({
@@ -20,13 +21,14 @@ export const StatusIndicator = ({
   notice,
   queueDepth,
   estimatedBacklogSeconds,
+  oldestPendingSeconds,
 }: Props) => {
   const backlogLabel =
     estimatedBacklogSeconds > 0
-      ? ` · ~${estimatedBacklogSeconds}s backlog`
+      ? ` · ~${estimatedBacklogSeconds}s to catch up`
       : "";
   const pipelineLabel =
-    queueDepth > 1 ? ` (${queueDepth} segments in pipeline${backlogLabel})` : "";
+    queueDepth > 0 ? ` (${queueDepth} parts${backlogLabel} · oldest ${oldestPendingSeconds}s)` : "";
   // Don't show anything if not capturing and no error
   if (!capturing && !error && !notice && !isProcessing && !isAIProcessing) {
     return null;

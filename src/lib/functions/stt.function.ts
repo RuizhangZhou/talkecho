@@ -65,6 +65,7 @@ export interface STTParams {
   signal?: AbortSignal;
   timeoutMs?: number;
   maxRetries?: number;
+  onRetry?: (failure: RequestFailure, attempt: number) => void;
 }
 
 /**
@@ -155,6 +156,7 @@ export async function fetchSTT(params: STTParams): Promise<string> {
       signal,
       timeoutMs = DEFAULT_STT_TIMEOUT_MS,
       maxRetries = DEFAULT_STT_MAX_RETRIES,
+      onRetry,
     } = params;
 
     // Validate audio quality first
@@ -193,10 +195,12 @@ export async function fetchSTT(params: STTParams): Promise<string> {
           // Tauri invoke cannot be safely replayed while the first invocation
           // may still be unwinding, so do not add a second frontend retry.
           maxRetries: 0,
-          onRetry: (failure, nextAttempt) =>
+          onRetry: (failure, nextAttempt) => {
+            onRetry?.(failure, nextAttempt);
             onDebug?.(
               `STT retry ${nextAttempt}/${maxRetries}: ${failure.message}`
-            ),
+            );
+          },
         }
       );
     }
@@ -387,7 +391,7 @@ export async function fetchSTT(params: STTParams): Promise<string> {
             body: curlJson.method === "GET" ? undefined : body,
             secretRef: selectedProvider.secretRef || provider.secretRef,
             timeoutMs,
-          });
+          }, attemptSignal);
         } catch (error) {
           throw normalizeRequestFailure(error, {
             cancelled: signal?.aborted,
@@ -415,8 +419,10 @@ export async function fetchSTT(params: STTParams): Promise<string> {
         signal,
         timeoutMs,
         maxRetries,
-        onRetry: (failure, nextAttempt) =>
-          onDebug?.(`STT retry ${nextAttempt}/${maxRetries}: ${failure.message}`),
+        onRetry: (failure, nextAttempt) => {
+          onRetry?.(failure, nextAttempt);
+          onDebug?.(`STT retry ${nextAttempt}/${maxRetries}: ${failure.message}`);
+        },
       }
     );
 

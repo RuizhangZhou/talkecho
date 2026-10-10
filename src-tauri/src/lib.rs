@@ -4,6 +4,7 @@ mod api;
 mod capture;
 mod db;
 mod dictation;
+mod meeting_diagnostics;
 mod provider_http;
 mod secrets;
 mod shortcuts;
@@ -117,6 +118,11 @@ pub fn run() {
     let builder = builder
         .invoke_handler(tauri::generate_handler![
             get_app_version,
+            meeting_diagnostics::write_meeting_diagnostic,
+            meeting_diagnostics::get_meeting_diagnostics_path,
+            provider_http::prepare_provider_request,
+            provider_http::cancel_provider_request,
+            provider_http::finish_provider_request,
             window::set_window_height,
             window::open_dashboard,
             window::toggle_dashboard,
