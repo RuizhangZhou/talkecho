@@ -48,6 +48,9 @@ reset press ownership. No actual RDP session, sleep, lock or key injection occur
 - `npm run test:native`: 27 passed (14 routing-policy tests, including the
   50,000-press stress loop; other existing native tests also pass).
 - `npm test`: 38 passed; existing meeting/provider coverage remains green.
+- `node node_modules/@tauri-apps/cli/tauri.js build --no-bundle`: succeeded;
+  diagnostic executable at `src-tauri/target/release/talkecho.exe` (not installed,
+  not a published release; package version remains 0.2.2).
 - Both PowerShell scripts parse successfully; the read-only observer ran for
   one second and returned a Ctrl/foreground snapshot without input injection.
 - No actual mstsc session was running during this investigation. No desktop
