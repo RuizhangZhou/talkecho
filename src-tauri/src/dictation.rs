@@ -13,44 +13,77 @@
 
 use tauri::AppHandle;
 
+#[cfg(any(target_os = "windows", test))]
+mod hotkey;
+
 const DICTATION_WINDOW_LABEL: &str = "dictation";
 const DICTATION_WINDOW_WIDTH: f64 = 360.0;
 const DICTATION_WINDOW_HEIGHT: f64 = 140.0;
 
 #[cfg(target_os = "windows")]
 mod windows_impl {
+    use super::hotkey::{self, Decision, PressState, Route, RoutingState, Source, VK_RCONTROL};
     use super::*;
+    use std::cell::Cell;
     use std::io::Write;
-    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{mpsc, Mutex, OnceLock};
 
     use enigo::{Enigo, Keyboard, Settings as EnigoSettings};
     use serde::Serialize;
     use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
     use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
+    use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
     use windows::Win32::UI::WindowsAndMessaging::{
-        CallNextHookEx, DispatchMessageW, GetMessageW, KillTimer, SetTimer, SetWindowsHookExW,
-        TranslateMessage, UnhookWindowsHookEx, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN,
-        WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_TIMER,
+        CallNextHookEx, DispatchMessageW, GetForegroundWindow, GetMessageW,
+        GetWindowThreadProcessId, KillTimer, SetTimer, SetWindowsHookExW, TranslateMessage,
+        UnhookWindowsHookEx, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_TIMER,
     };
-
-    const VK_CONTROL: u32 = 0x11;
-    const VK_RCONTROL: u32 = 0xA3;
-    // Some keyboard drivers report Right Ctrl as generic Ctrl with this flag
-    // rather than using VK_RCONTROL.
-    const LLKHF_EXTENDED: u32 = 0x01;
 
     static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
     // One atomic snapshot: odd sequences are recording, even sequences stopped.
     static DICTATION_SEQUENCE: AtomicU64 = AtomicU64::new(0);
-    static RCTRL_HELD: AtomicBool = AtomicBool::new(false);
-    static WORKER: OnceLock<mpsc::Sender<HotkeyWork>> = OnceLock::new();
+    // Both the callback and timer execute on the installing thread. Cell avoids
+    // blocking locks; copy the state before dispatch and commit before forwarding.
+    thread_local! {
+        static ROUTING: Cell<RoutingState> = Cell::new(RoutingState::default());
+        static HOOK_GENERATION: Cell<u64> = const { Cell::new(0) };
+        static ALLOW_TEST_INPUT: Cell<bool> = const { Cell::new(false) };
+    }
+    static WORKER: OnceLock<mpsc::SyncSender<HotkeyWork>> = OnceLock::new();
+    static DROPPED_WORK: AtomicU64 = AtomicU64::new(0);
     static LOG_LOCK: Mutex<()> = Mutex::new(());
     const HOOK_REFRESH_MS: u32 = 30_000;
 
     enum HotkeyWork {
         Toggle,
         Diagnostic(String),
+        Edge(EdgeTrace),
+    }
+
+    struct EdgeTrace {
+        time_ms: u32,
+        generation: u64,
+        msg: u32,
+        vk: u32,
+        scan: u32,
+        flags: u32,
+        source: Source,
+        decision: Decision,
+        before: RoutingState,
+        after: RoutingState,
+        foreground: usize,
+        foreground_pid: u32,
+    }
+
+    fn queue_work(work: HotkeyWork) -> bool {
+        let queued = WORKER
+            .get()
+            .is_some_and(|worker| worker.try_send(work).is_ok());
+        if !queued {
+            DROPPED_WORK.fetch_add(1, Ordering::Relaxed);
+        }
+        queued
     }
 
     // Never call this from the keyboard callback: even stderr/file I/O can block.
@@ -83,18 +116,6 @@ mod windows_impl {
         }
     }
 
-    fn right_ctrl_transition(held: bool, msg: u32) -> (bool, bool) {
-        match msg {
-            WM_KEYDOWN | WM_SYSKEYDOWN => (true, !held),
-            WM_KEYUP | WM_SYSKEYUP => (false, false),
-            _ => (held, false),
-        }
-    }
-
-    fn is_right_ctrl(vk_code: u32, flags: u32) -> bool {
-        vk_code == VK_RCONTROL || (vk_code == VK_CONTROL && flags & LLKHF_EXTENDED != 0)
-    }
-
     #[derive(Clone, Serialize)]
     pub struct DictationTogglePayload {
         active: bool,
@@ -123,25 +144,38 @@ mod windows_impl {
             let msg = wparam.0 as u32;
             let info = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
 
-            if is_right_ctrl(info.vkCode, info.flags.0) {
-                let held = RCTRL_HELD.load(Ordering::SeqCst);
-                let (next_held, should_toggle) = right_ctrl_transition(held, msg);
-                RCTRL_HELD.store(next_held, Ordering::SeqCst);
+            if hotkey::is_right_ctrl(info.vkCode, info.flags.0) {
+                // Capture focus before dispatching Toggle: the UI can show its
+                // HUD as soon as the worker receives that message.
+                let foreground = GetForegroundWindow();
+                let mut foreground_pid = 0;
+                GetWindowThreadProcessId(foreground, Some(&mut foreground_pid));
+                let source = hotkey::source(info.flags.0, info.dwExtraInfo, ALLOW_TEST_INPUT.get());
+                let before = ROUTING.get();
+                let mut after = before;
+                let decision = after.transition(source, msg, || queue_work(HotkeyWork::Toggle));
+                ROUTING.set(after);
 
-                if should_toggle {
-                    // No WebView calls, logging, or window operations on the hook
-                    // thread. Windows silently removes hooks that take too long.
-                    if WORKER
-                        .get()
-                        .is_none_or(|worker| worker.send(HotkeyWork::Toggle).is_err())
-                    {
-                        return CallNextHookEx(None, code, wparam, lparam);
-                    }
+                // Snapshot only metadata here, not window titles or typed keys.
+                // Formatting/file I/O stays on the worker and the queue is bounded.
+                queue_work(HotkeyWork::Edge(EdgeTrace {
+                    time_ms: info.time,
+                    generation: HOOK_GENERATION.get(),
+                    msg,
+                    vk: info.vkCode,
+                    scan: info.scanCode,
+                    flags: info.flags.0,
+                    source,
+                    decision,
+                    before,
+                    after,
+                    foreground: foreground.0 as usize,
+                    foreground_pid,
+                }));
+
+                if decision.route == Route::Consume {
+                    return LRESULT(1);
                 }
-
-                // Right Ctrl is reserved for TalkEcho while it is running. Do
-                // not forward it to the focused application.
-                return LRESULT(1);
             }
         }
 
@@ -151,50 +185,6 @@ mod windows_impl {
     #[cfg(test)]
     mod tests {
         use super::*;
-
-        #[test]
-        fn right_ctrl_toggles_once_per_press_for_system_messages() {
-            let (held, toggle) = right_ctrl_transition(false, WM_SYSKEYDOWN);
-            assert!(held);
-            assert!(toggle);
-
-            let (held, toggle) = right_ctrl_transition(held, WM_SYSKEYDOWN);
-            assert!(held);
-            assert!(!toggle, "key repeat must not toggle dictation");
-
-            let (held, toggle) = right_ctrl_transition(held, WM_SYSKEYUP);
-            assert!(!held);
-            assert!(!toggle);
-
-            let (held, toggle) = right_ctrl_transition(held, WM_SYSKEYDOWN);
-            assert!(held);
-            assert!(toggle, "the next physical press must toggle again");
-        }
-
-        #[test]
-        fn right_ctrl_accepts_mixed_normal_and_system_messages() {
-            let (held, toggle) = right_ctrl_transition(false, WM_KEYDOWN);
-            assert!(held);
-            assert!(toggle);
-
-            let (held, toggle) = right_ctrl_transition(held, WM_KEYUP);
-            assert!(!held);
-            assert!(!toggle);
-
-            let (held, toggle) = right_ctrl_transition(held, WM_SYSKEYDOWN);
-            assert!(held);
-            assert!(toggle);
-        }
-
-        #[test]
-        fn recognizes_both_windows_right_ctrl_representations() {
-            assert!(is_right_ctrl(VK_RCONTROL, 0));
-            assert!(is_right_ctrl(VK_CONTROL, LLKHF_EXTENDED));
-            assert!(
-                !is_right_ctrl(VK_CONTROL, 0),
-                "Left Ctrl must remain unused"
-            );
-        }
 
         #[test]
         fn delayed_close_cannot_hide_a_new_recording_or_its_result() {
@@ -235,7 +225,7 @@ mod windows_impl {
     /// with its own message loop (required by `WH_KEYBOARD_LL`).
     pub fn start_hotkey_listener(app: &AppHandle) {
         let _ = APP_HANDLE.set(app.clone());
-        let (sender, receiver) = mpsc::channel();
+        let (sender, receiver) = mpsc::sync_channel(256);
         if WORKER.set(sender).is_err() {
             return;
         }
@@ -250,6 +240,12 @@ mod windows_impl {
         let app = app.clone();
         std::thread::spawn(move || {
             for work in receiver {
+                let dropped = DROPPED_WORK.swap(0, Ordering::Relaxed);
+                if dropped > 0 {
+                    diagnostic(&format!(
+                        "hotkey queue pressure: dropped_work={dropped}; fresh presses fail open"
+                    ));
+                }
                 match work {
                     HotkeyWork::Toggle => {
                         if let Err(error) = app.run_on_main_thread(toggle_dictation) {
@@ -257,29 +253,55 @@ mod windows_impl {
                         }
                     }
                     HotkeyWork::Diagnostic(message) => diagnostic(&message),
+                    HotkeyWork::Edge(edge) => diagnostic(&format!(
+                        "right_ctrl time_ms={} generation={} msg=0x{:x} vk=0x{:x} scan=0x{:x} flags=0x{:x} source={:?} edge={:?} route={:?} physical={:?}->{:?} test={:?}->{:?} foreground=0x{:x} foreground_pid={}",
+                        edge.time_ms, edge.generation, edge.msg, edge.vk, edge.scan, edge.flags,
+                        edge.source, edge.decision.edge, edge.decision.route,
+                        edge.before.physical, edge.after.physical, edge.before.test, edge.after.test,
+                        edge.foreground, edge.foreground_pid,
+                    )),
                 }
             }
         });
 
         std::thread::spawn(|| unsafe {
+            // Only an explicitly opted-in test process accepts our tagged
+            // synthetic input. Other injected Ctrl events always pass untouched.
+            ALLOW_TEST_INPUT.set(std::env::var("TALKECHO_HOTKEY_TEST_INPUT").as_deref() == Ok("1"));
+            // Startup only: don't steal the release of a key pressed before us.
+            // A zero result is NOT used later to clear a swallowed physical hold.
+            if GetAsyncKeyState(VK_RCONTROL as i32) < 0 {
+                ROUTING.set(RoutingState {
+                    physical: PressState::Forwarded,
+                    ..Default::default()
+                });
+            }
             let report = |message: String| {
-                if let Some(worker) = WORKER.get() {
-                    let _ = worker.send(HotkeyWork::Diagnostic(message));
-                }
+                queue_work(HotkeyWork::Diagnostic(message));
             };
             let install =
                 || match SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook_proc), None, 0) {
-                    Ok(hook) => Some(hook),
+                    Ok(hook) => {
+                        HOOK_GENERATION.set(HOOK_GENERATION.get() + 1);
+                        Some(hook)
+                    }
                     Err(error) => {
                         report(format!("hook installation failed: {error}"));
                         None
                     }
                 };
             let mut hook = install();
-            report(format!("keyboard hook installed={}", hook.is_some()));
+            report(format!(
+                "keyboard hook installed={} generation={} state={:?} test_input={}",
+                hook.is_some(),
+                HOOK_GENERATION.get(),
+                ROUTING.get(),
+                ALLOW_TEST_INPUT.get()
+            ));
             // Windows provides no notification when it removes a timed-out hook.
             // Renew twice per minute, including after sleep, and retry failures.
-            // This does NOT poll keys; GetMessage blocks between OS events.
+            // Never move ahead of another application's hook mid-press: it may
+            // already have seen the down and would then miss a consumed up.
             let timer = SetTimer(None, 0, HOOK_REFRESH_MS, None);
             if timer == 0 {
                 report("hook recovery timer failed".into());
@@ -292,12 +314,23 @@ mod windows_impl {
                     break;
                 }
                 if msg.message == WM_TIMER && msg.wParam.0 == timer {
+                    if !ROUTING.get().can_renew() {
+                        report(format!(
+                            "keyboard hook renewal deferred: active press state={:?} generation={}",
+                            ROUTING.get(),
+                            HOOK_GENERATION.get()
+                        ));
+                        continue;
+                    }
                     // Install first: if renewal fails, retain the previous hook.
                     if let Some(next) = install() {
                         if let Some(previous) = hook.replace(next) {
                             let _ = UnhookWindowsHookEx(previous);
                         }
-                        report("keyboard hook renewed".into());
+                        report(format!(
+                            "keyboard hook renewed generation={}",
+                            HOOK_GENERATION.get()
+                        ));
                     }
                     continue;
                 }
