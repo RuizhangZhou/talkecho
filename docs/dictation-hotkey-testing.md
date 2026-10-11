@@ -72,6 +72,7 @@ $env:CARGO_BUILD_JOBS = '1'
 node node_modules/@tauri-apps/cli/tauri.js build --no-bundle
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-dictation-hotkey.ps1 -ExecutablePath src-tauri/target/release/talkecho.exe -IdleSeconds 0
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-dictation-hotkey.ps1 -ExecutablePath src-tauri/target/release/talkecho.exe -IdleSeconds 35
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-dictation-hotkey.ps1 -ExecutablePath src-tauri/target/release/talkecho.exe -IdleSeconds 0 -HoldAcrossRenewal
 ```
 
 The test launches and terminates only its own process. It explicitly enables
@@ -81,6 +82,8 @@ still bypass the hotkey. It verifies native popup, microphone initialization,
 repeat suppression, Left Ctrl exclusion, injected bypass, paired release and (with
 the idle interval) hidden-window startup and hook renewal. It never stops the
 recording through the application, so no test audio is submitted to STT.
+`-HoldAcrossRenewal` holds the tagged test key for 35 seconds and requires a
+renewal-deferral diagnostic before releasing it (still no STT submission).
 Do not type or use dictation during the test. Synthetic keys do not prove that
 every physical keyboard or competing hook behaves identically.
 This test temporarily injects desktop-wide keys and may show a recording HUD;

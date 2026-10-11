@@ -1,6 +1,7 @@
 param(
   [Parameter(Mandatory = $true)][string]$ExecutablePath,
-  [int]$IdleSeconds = 35
+  [ValidateRange(0, 55)][int]$IdleSeconds = 35,
+  [switch]$HoldAcrossRenewal
 )
 
 # Run against a release executable with no other TalkEcho instance running.
@@ -108,6 +109,12 @@ try {
   $testKeyHeld = $true
   Wait-For { [DictationSmoke]::Visible($testApp.Id) } 'native popup'
   Wait-For { (Read-TestLog) -match "status set to 'recording'" } 'frontend recording'
+  if ($HoldAcrossRenewal) {
+    Start-Sleep -Seconds 35
+    if ((Read-TestLog) -notmatch 'keyboard hook renewal deferred: active press') {
+      throw 'Hook renewal was not deferred during the held test key'
+    }
+  }
   1..10 | ForEach-Object { [DictationSmoke]::keybd_event(0xA3, 0x1D, 1, $testMarker) }
   [DictationSmoke]::keybd_event(0xA3, 0x1D, 3, $testMarker)
   $testKeyHeld = $false
@@ -116,7 +123,7 @@ try {
   if ([regex]::Matches($testLog, 'toggle ->').Count -ne 1) { throw 'Held key toggled more than once' }
   if ($testLog -notmatch 'source=Test edge=Up route=Consume .*test=Consumed->Idle') { throw 'Test release was not paired with its consumed down' }
   if (-not [DictationSmoke]::Visible($testApp.Id)) { throw 'Popup disappeared during recording' }
-  Write-Output "PASS: popup, recording, Left Ctrl exclusion, injected bypass, paired release, repeat suppression; idle=$IdleSeconds seconds."
+  Write-Output "PASS: popup, recording, Left Ctrl exclusion, injected bypass, paired release, repeat suppression; idle=$IdleSeconds seconds; hold-across-renewal=$HoldAcrossRenewal."
 } finally {
   # Release only an unmatched down injected by THIS test, not an unconditional
   # global Ctrl-up as a proposed repair for a user's real keyboard state.
