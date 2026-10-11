@@ -6,12 +6,18 @@ import { useApp } from "@/contexts";
 import {
   buildMeetingReferenceContext,
   CoalescingTaskQueue,
+  OrderedTaskPool,
+  splitMeetingText,
+  MEETING_TRANSLATION_BATCH_TOKENS,
+  MEETING_REFERENCE_TOKENS,
+  estimateMeetingDrainMs,
   estimateTextTokens,
   fetchSTT,
   fetchAIResponse,
   formatRequestFailure,
   getProviderTokenBudget,
   RequestFailure,
+  normalizeRequestFailure,
   selectRecentHistory,
   sortMessagesChronologically,
 } from "@/lib/functions";
@@ -35,6 +41,7 @@ import type {
   ChatConversation as CompletionConversation,
 } from "@/types/completion";
 import { floatArrayToWav } from "@/lib/utils";
+import { recordMeetingDiagnostic, meetingFailureLabel } from "@/lib/meeting-diagnostics";
 
 // VAD Configuration interface matching Rust
 export interface VadConfig {
@@ -168,6 +175,21 @@ export function useAudioOverlay() {
   const [notice, setNotice] = useState<string>("");
   const [queueDepth, setQueueDepth] = useState(0);
   const [estimatedBacklogSeconds, setEstimatedBacklogSeconds] = useState(0);
+  const [oldestPendingSeconds, setOldestPendingSeconds] = useState(0);
+  const [recentMeetingErrors, setRecentMeetingErrors] = useState<string[]>([]);
+  const [meetingTimings, setMeetingTimings] = useState<{
+    sttMs?: number; firstTokenMs?: number; translationMs?: number;
+  }>({});
+  const reportMeetingFailure = (stage: "stt" | "translation", error: unknown) => {
+    const failure = normalizeRequestFailure(error);
+    if (failure.kind === "cancelled") return;
+    const label = meetingFailureLabel(stage, failure);
+    setError(label);
+    setRecentMeetingErrors((previous) => [
+      `${new Date().toLocaleTimeString()} ${label}`, ...previous,
+    ].slice(0, 10));
+    recordMeetingDiagnostic({ stage, event: "failure", kind: failure.kind, status: failure.status });
+  };
   const [setupRequired, setSetupRequired] = useState<boolean>(false);
   const [quickActions, setQuickActions] = useState<string[]>([]);
   const [isManagingQuickActions, setIsManagingQuickActions] =
@@ -233,13 +255,15 @@ export function useAudioOverlay() {
   const abortControllerRef = useRef<AbortController | null>(null);
   const meetingRequestControllersRef = useRef(new Set<AbortController>());
   const meetingQueueGenerationRef = useRef(0);
+  const averageTranscriptTokensRef = useRef(40);
+  const lastMetricsLogRef = useRef(0);
   const processMeetingBatchRef = useRef<
-    ((segments: MeetingAudioSegment[]) => Promise<void>) | null
+    ((segment: MeetingAudioSegment) => Promise<MeetingTranscriptSegment | null>) | null
   >(null);
   const processMeetingTextBatchRef = useRef<
     ((segments: MeetingTranscriptSegment[]) => Promise<void>) | null
   >(null);
-  const meetingQueueRef = useRef<CoalescingTaskQueue<MeetingAudioSegment> | null>(
+  const meetingQueueRef = useRef<OrderedTaskPool<MeetingAudioSegment, MeetingTranscriptSegment | null> | null>(
     null
   );
   const meetingTextQueueRef = useRef<
@@ -250,26 +274,54 @@ export function useAudioOverlay() {
     const textSnapshot = meetingTextQueueRef.current?.snapshot;
     const totalItems =
       (audioSnapshot?.totalItems ?? 0) + (textSnapshot?.totalItems ?? 0);
-    const estimatedBacklogMs =
-      (audioSnapshot?.estimatedBacklogMs ?? 0) +
-      (textSnapshot?.estimatedBacklogMs ?? 0) +
-      (audioSnapshot?.totalItems ?? 0) *
-        (textSnapshot?.averageItemDurationMs ?? 8_000);
+    const estimatedBacklogMs = audioSnapshot && textSnapshot
+      ? estimateMeetingDrainMs(audioSnapshot, textSnapshot, averageTranscriptTokensRef.current) : 0;
     setQueueDepth(totalItems);
+    setIsProcessing((audioSnapshot?.totalItems ?? 0) > 0);
+    setOldestPendingSeconds(Math.floor(Math.max(
+      audioSnapshot?.oldestAgeMs ?? 0, textSnapshot?.oldestAgeMs ?? 0
+    ) / 1_000));
     setEstimatedBacklogSeconds(
       totalItems > 1 ? Math.max(1, Math.ceil(estimatedBacklogMs / 1_000)) : 0
     );
+    if (totalItems && Date.now() - lastMetricsLogRef.current > 15_000) {
+      lastMetricsLogRef.current = Date.now();
+      recordMeetingDiagnostic({ stage: "pipeline", event: "snapshot", segments: totalItems,
+        durationMs: Math.round(estimatedBacklogMs),
+        queueWaitMs: Math.round(Math.max(audioSnapshot?.oldestAgeMs ?? 0, textSnapshot?.oldestAgeMs ?? 0)) });
+    }
   };
   if (!meetingQueueRef.current) {
-    meetingQueueRef.current = new CoalescingTaskQueue(
-      async (segments) => {
+    meetingQueueRef.current = new OrderedTaskPool(
+      async (segment) => {
         if (!processMeetingBatchRef.current) {
           throw new Error("Meeting processor is not ready");
         }
-        await processMeetingBatchRef.current(segments);
+        return await processMeetingBatchRef.current(segment);
+      },
+      (_audio, transcript) => {
+        if (!transcript || transcript.generation !== meetingQueueGenerationRef.current) return;
+        averageTranscriptTokensRef.current = averageTranscriptTokensRef.current * 0.75 +
+          estimateTextTokens(transcript.text) * 0.25;
+        const message: ChatMessage = {
+          id: `${generateMessageId("user", transcript.capturedAt)}_${crypto.randomUUID()}`,
+          role: "user", content: transcript.text, timestamp: transcript.capturedAt,
+          source: transcript.source,
+        };
+        setConversation((previous) => {
+          const next = { ...previous, messages: [message, ...previous.messages],
+            updatedAt: Date.now(), title: previous.title || generateConversationTitle(transcript.text) };
+          conversationRef.current = next;
+          return next;
+        });
+        const pieces = splitMeetingText(transcript.text, MEETING_TRANSLATION_BATCH_TOKENS - 8)
+          .map((text) => ({ ...transcript, text }));
+        void meetingTextQueueRef.current!.enqueueBatch(pieces).catch((error) => {
+          reportMeetingFailure("translation", error);
+        });
       },
       refreshMeetingQueueMetrics,
-      3_000
+      (segment) => segment.capturedAt
     );
   }
   if (!meetingTextQueueRef.current) {
@@ -281,7 +333,14 @@ export function useAudioOverlay() {
         await processMeetingTextBatchRef.current(segments);
       },
       refreshMeetingQueueMetrics,
-      8_000
+      40,
+      {
+        maxBatchItems: 8,
+        maxBatchWeight: MEETING_TRANSLATION_BATCH_TOKENS,
+        itemWeight: (segment) => estimateTextTokens(segment.text) + 8,
+        batchOverheadMs: 1_500,
+        timestamp: (segment) => segment.capturedAt,
+      }
     );
   }
   const aiQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -689,7 +748,7 @@ export function useAudioOverlay() {
                 queueError instanceof RequestFailure ? queueError : null;
               if (failure?.kind === "cancelled") return;
               console.error("Meeting speech processing failed:", queueError);
-              setError(formatRequestFailure(queueError));
+              reportMeetingFailure("stt", queueError);
               setIsPopoverOpen(true);
             });
         });
@@ -862,7 +921,7 @@ export function useAudioOverlay() {
         });
       } catch (error) {
         if (!(error instanceof RequestFailure && error.kind === "cancelled")) {
-          setError(formatRequestFailure(error));
+          reportMeetingFailure("stt", error);
         }
       }
     },
@@ -880,10 +939,16 @@ export function useAudioOverlay() {
       transcription: string,
       prompt: string,
       previousMessages: CompletionMessage[],
-      source: ChatMessage["source"] = "system_audio"
+      source: ChatMessage["source"] = "system_audio",
+      meetingTimestamp?: number
     ) => {
       const controller = new AbortController();
       abortControllerRef.current = controller;
+      const startedAt = Date.now();
+      let firstTokenAt = 0;
+      let requestFailed = false;
+      let requestFailure: unknown;
+      const diagnosticStage = source === "manual" ? undefined : "translation";
 
       try {
         setIsAIProcessing(true);
@@ -894,16 +959,14 @@ export function useAudioOverlay() {
 
         const useTalkEchoAPI = await shouldUseTalkEchoAPI();
         if (!selectedAIProvider.provider && !useTalkEchoAPI) {
-          setError("No AI provider selected.");
-          return;
+          throw new Error("No AI provider selected.");
         }
 
         const provider = allAiProviders.find(
           (p) => p.id === selectedAIProvider.provider
         );
         if (!provider && !useTalkEchoAPI) {
-          setError("AI provider config not found.");
-          return;
+          throw new Error("AI provider config not found.");
         }
 
         // Instant Ask uses a provider-aware recent-history budget. Automatic
@@ -933,6 +996,12 @@ export function useAudioOverlay() {
           });
         }
 
+        if (diagnosticStage) recordMeetingDiagnostic({
+          stage: diagnosticStage, event: "start", provider: selectedAIProvider.provider,
+          model: selectedAIProvider.variables.model,
+          inputTokens: estimateTextTokens(transcription) + estimateTextTokens(prompt),
+          queueWaitMs: meetingTimestamp === undefined ? 0 : startedAt - meetingTimestamp,
+        });
         try {
           for await (const chunk of fetchAIResponse({
             provider: useTalkEchoAPI ? undefined : provider,
@@ -944,17 +1013,30 @@ export function useAudioOverlay() {
             signal: controller.signal,
             timeoutMs: 60_000,
             inactivityTimeoutMs: 20_000,
-            onRetry: (attempt, reason) => {
+            onRetry: (attempt, reason, failure) => {
               setNotice(`Retrying AI request (${attempt}): ${reason}`);
               console.warn(`[meeting][ai] retry ${attempt}: ${reason}`);
+              if (diagnosticStage) recordMeetingDiagnostic({ stage: diagnosticStage, event: "retry",
+                attempt, kind: failure.kind, status: failure.status });
             },
           })) {
+            if (!firstTokenAt) {
+              firstTokenAt = Date.now();
+              if (diagnosticStage) setMeetingTimings((previous) => ({
+                ...previous, firstTokenMs: firstTokenAt - startedAt,
+              }));
+              if (diagnosticStage) recordMeetingDiagnostic({
+                stage: diagnosticStage, event: "first_token", durationMs: firstTokenAt - startedAt,
+              });
+            }
             fullResponse += chunk;
             setLastAIResponse((prev) => prev + chunk);
           }
         } catch (aiError: any) {
+          requestFailed = true;
+          requestFailure = aiError;
           if (!controller.signal.aborted) {
-            setError(formatRequestFailure(aiError));
+            if (!diagnosticStage) setError(formatRequestFailure(aiError));
           }
         }
 
@@ -964,17 +1046,17 @@ export function useAudioOverlay() {
             const nextConversation = {
               ...prev,
               messages: [
-                {
+                ...(meetingTimestamp === undefined ? [{
                   id: generateMessageId("user", timestamp),
                   role: "user" as const,
                   content: transcription,
                   timestamp,
                   source: source ?? "system_audio",
-                },
+                }] : []),
                 ...(fullResponse
                   ? [
                       {
-                        id: generateMessageId("assistant", timestamp + 1),
+                        id: `${generateMessageId("assistant", timestamp + 1)}_${crypto.randomUUID()}`,
                         role: "assistant" as const,
                         content: fullResponse,
                         timestamp: timestamp + 1,
@@ -984,14 +1066,23 @@ export function useAudioOverlay() {
                   : []),
                 ...prev.messages,
               ],
-              updatedAt: timestamp,
+              updatedAt: Date.now(),
               title: prev.title || generateConversationTitle(transcription),
             };
             conversationRef.current = nextConversation;
             return nextConversation;
           });
+          if (diagnosticStage && !requestFailed) recordMeetingDiagnostic({
+            stage: diagnosticStage, event: "complete", durationMs: Date.now() - startedAt,
+            outputCharacters: fullResponse.length,
+          });
+          if (diagnosticStage && !requestFailed) setMeetingTimings((previous) => ({
+            ...previous, translationMs: Date.now() - startedAt,
+          }));
         }
+        if (requestFailure) throw requestFailure;
       } catch (err) {
+        if (diagnosticStage) throw err;
         if (!(err instanceof RequestFailure && err.kind === "cancelled")) {
           setError(formatRequestFailure(err));
         }
@@ -1014,12 +1105,13 @@ export function useAudioOverlay() {
       transcription: string,
       prompt: string,
       previousMessages: CompletionMessage[],
-      source: ChatMessage["source"] = "system_audio"
+      source: ChatMessage["source"] = "system_audio",
+      meetingTimestamp?: number
     ) => {
       const generation = aiQueueGenerationRef.current;
       const queuedRequest = aiQueueRef.current.then(async () => {
         if (generation !== aiQueueGenerationRef.current) return;
-        await runAIRequest(transcription, prompt, previousMessages, source);
+        await runAIRequest(transcription, prompt, previousMessages, source, meetingTimestamp);
       });
 
       // Keep the queue usable after a failed request; the caller still receives
@@ -1031,16 +1123,12 @@ export function useAudioOverlay() {
   );
 
   const processMeetingBatch = useCallback(
-    async (segments: MeetingAudioSegment[]) => {
-      if (segments.length === 0) return;
+    async (segment: MeetingAudioSegment): Promise<MeetingTranscriptSegment | null> => {
       const generation = meetingQueueGenerationRef.current;
-
-      const containsMicrophone = segments.some(
-        (segment) => segment.source === "microphone"
-      );
-      setIsProcessing(true);
-      setIsMicProcessing(containsMicrophone);
-      setNotice("");
+      const startedAt = Date.now();
+      const controller = new AbortController();
+      meetingRequestControllersRef.current.add(controller);
+      setIsMicProcessing(segment.source === "microphone");
 
       try {
         const useTalkEchoAPI = await shouldUseTalkEchoAPI();
@@ -1055,98 +1143,56 @@ export function useAudioOverlay() {
           throw new Error("Speech provider config not found.");
         }
 
-        const transcribed: MeetingTranscriptSegment[] = [];
-        let failedSegments = 0;
-        let firstFailure: unknown;
-
-        // Preserve capture order inside the promoted batch. STT remains
-        // sequential so provider responses cannot reorder the utterances.
-        for (const segment of segments) {
-          if (generation !== meetingQueueGenerationRef.current) {
-            throw new RequestFailure("Meeting processing stopped", {
-              kind: "cancelled",
-            });
-          }
-          const controller = new AbortController();
-          meetingRequestControllersRef.current.add(controller);
-          try {
-            let audioBlob: Blob;
-            if (segment.kind === "base64-wav") {
-              const binaryString = atob(segment.data);
-              const bytes = new Uint8Array(binaryString.length);
-              for (let index = 0; index < binaryString.length; index += 1) {
-                bytes[index] = binaryString.charCodeAt(index);
-              }
-              audioBlob = new Blob([bytes], { type: "audio/wav" });
-            } else {
-              audioBlob = floatArrayToWav(segment.data, 16_000, "wav");
-            }
-
-            const transcription = await fetchSTT({
-              provider: providerConfig,
-              selectedProvider: selectedSttProvider,
-              audio: audioBlob,
-              language: sttLanguage,
-              signal: controller.signal,
-              timeoutMs: 25_000,
-              onDebug: (message) =>
-                console.debug(
-                  `[meeting][${segment.source}][${segment.capturedAt}] ${message}`
-                ),
-            });
-            if (transcription.trim()) {
-              transcribed.push({
-                text: transcription.trim(),
-                source: segment.source,
-                capturedAt: segment.capturedAt,
-                generation,
-              });
-            }
-          } catch (error) {
-            if (error instanceof RequestFailure && error.kind === "cancelled") {
-              throw error;
-            }
-            failedSegments += 1;
-            firstFailure ??= error;
-            console.error("Meeting segment transcription failed:", error);
-          } finally {
-            meetingRequestControllersRef.current.delete(controller);
-          }
-        }
-
-        if (transcribed.length === 0) {
-          if (firstFailure) throw firstFailure;
-          return;
-        }
-
         if (generation !== meetingQueueGenerationRef.current) {
-          throw new RequestFailure("Meeting processing stopped", {
-            kind: "cancelled",
-          });
+          throw new RequestFailure("Meeting processing stopped", { kind: "cancelled" });
         }
-
-        // Do not await AI here: transcription continues filling the single
-        // mutable pending text batch while the current AI request is running.
-        void meetingTextQueueRef.current!
-          .enqueueBatch(transcribed)
-          .catch((error) => {
-            if (!(error instanceof RequestFailure && error.kind === "cancelled")) {
-              console.error("Meeting text batch failed:", error);
-              setError(formatRequestFailure(error));
-            }
-          });
-
-        if (failedSegments > 0) {
-          setNotice(
-            `${failedSegments} audio segment${
-              failedSegments === 1 ? "" : "s"
-            } could not be transcribed; the remaining batch was processed.`
-          );
+        let audioBlob: Blob;
+        if (segment.kind === "base64-wav") {
+          const binaryString = atob(segment.data);
+          const bytes = new Uint8Array(binaryString.length);
+          for (let index = 0; index < binaryString.length; index += 1) {
+            bytes[index] = binaryString.charCodeAt(index);
+          }
+          audioBlob = new Blob([bytes], { type: "audio/wav" });
         } else {
-          setNotice("");
+          audioBlob = floatArrayToWav(segment.data, 16_000, "wav");
         }
+
+        const wavHeader = new DataView(await audioBlob.slice(0, 44).arrayBuffer());
+        const bytesPerSecond = wavHeader.byteLength >= 32 ? wavHeader.getUint32(28, true) : 0;
+        recordMeetingDiagnostic({
+          stage: "stt", event: "start", provider: selectedSttProvider.provider,
+          model: selectedSttProvider.variables.model, audioBytes: audioBlob.size,
+          audioDurationMs: bytesPerSecond ? Math.round(Math.max(0, audioBlob.size - 44) / bytesPerSecond * 1_000) : undefined,
+          queueWaitMs: startedAt - segment.capturedAt,
+        });
+        const transcription = await fetchSTT({
+          provider: providerConfig,
+          selectedProvider: selectedSttProvider,
+          audio: audioBlob,
+          language: sttLanguage,
+          signal: controller.signal,
+          timeoutMs: 25_000,
+          onRetry: (failure, attempt) => recordMeetingDiagnostic({ stage: "stt", event: "retry",
+            attempt, kind: failure.kind, status: failure.status }),
+          onDebug: (message) => console.debug(
+            `[meeting][${segment.source}][${segment.capturedAt}] ${message}`
+          ),
+        });
+        if (generation !== meetingQueueGenerationRef.current) {
+          throw new RequestFailure("Meeting processing stopped", { kind: "cancelled" });
+        }
+        recordMeetingDiagnostic({
+          stage: "stt", event: "complete", durationMs: Date.now() - startedAt,
+          transcriptTokens: estimateTextTokens(transcription),
+        });
+        setMeetingTimings((previous) => ({ ...previous, sttMs: Date.now() - startedAt }));
+        return transcription.trim() ? {
+          text: transcription.trim(), source: segment.source,
+          capturedAt: segment.capturedAt, generation,
+        } : null;
       } finally {
-        setIsProcessing(false);
+        meetingRequestControllersRef.current.delete(controller);
         setIsMicProcessing(false);
       }
     },
@@ -1170,52 +1216,46 @@ export function useAudioOverlay() {
         });
       }
 
-      const hasMixedSources = new Set(
-          segments.map((entry) => entry.source)
-        ).size > 1;
-        const combinedTranscription = segments
-          .map((entry) => {
-            if (!hasMixedSources) return entry.text;
-            const label =
-              entry.source === "microphone" ? "Microphone" : "System audio";
-            return `[${label}] ${entry.text}`;
-          })
-          .join("\n");
-        const combinedSource: ChatMessage["source"] = segments.every(
-          (entry) => entry.source === "microphone"
-        )
-          ? "microphone"
-          : "system_audio";
+      const hasMixedSources = new Set(segments.map((entry) => entry.source)).size > 1;
+      const combinedTranscription = segments.map((entry) => {
+        if (!hasMixedSources) return entry.text;
+        const label = entry.source === "microphone" ? "Microphone" : "System audio";
+        return `[${label}] ${entry.text}`;
+      }).join("\n");
+      const combinedSource: ChatMessage["source"] = segments.every(
+        (entry) => entry.source === "microphone"
+      ) ? "microphone" : "system_audio";
 
-        setLastTranscription(combinedTranscription);
-        setError("");
+      setLastTranscription(combinedTranscription);
+      setError("");
 
-        const basePrompt = useSystemPrompt
-          ? systemPrompt || DEFAULT_SYSTEM_PROMPT
-          : contextContent || DEFAULT_SYSTEM_PROMPT;
-        const aiProvider = allAiProviders.find(
-          (provider) => provider.id === selectedAIProvider.provider
-        );
-        const providerBudget = getProviderTokenBudget(aiProvider);
-        const meetingContext = buildMeetingReferenceContext(
-          conversationRef.current.messages,
-          Math.min(2_000, Math.floor(providerBudget.historyBudgetTokens / 3))
-        );
-        const effectiveSystemPrompt = meetingContext.context
-          ? `${basePrompt}\n\nMeeting context for reference only (do not answer or retranslate it):\n<meeting_context>\n${meetingContext.context}\n</meeting_context>\nAnswer or translate only the current user utterance.`
-          : basePrompt;
+      const basePrompt = useSystemPrompt
+        ? systemPrompt || DEFAULT_SYSTEM_PROMPT
+        : contextContent || DEFAULT_SYSTEM_PROMPT;
+      const aiProvider = allAiProviders.find(
+        (provider) => provider.id === selectedAIProvider.provider
+      );
+      const providerBudget = getProviderTokenBudget(aiProvider);
+      const meetingContext = buildMeetingReferenceContext(
+        conversationRef.current.messages
+          .filter((message) => message.timestamp < segments[0].capturedAt)
+          .sort((left, right) => right.timestamp - left.timestamp),
+        Math.min(MEETING_REFERENCE_TOKENS, Math.floor(providerBudget.historyBudgetTokens / 3))
+      );
+      const effectiveSystemPrompt = meetingContext.context
+        ? `${basePrompt}\n\nMeeting context for reference only (do not answer or retranslate it):\n<meeting_context>\n${meetingContext.context}\n</meeting_context>\nAnswer or translate only the current user utterance.`
+        : basePrompt;
 
-        if (generation !== meetingQueueGenerationRef.current) {
-          throw new RequestFailure("Meeting processing stopped", {
-            kind: "cancelled",
-          });
-        }
-        await processWithAI(
-          combinedTranscription,
-          effectiveSystemPrompt,
-          [],
-          combinedSource
-        );
+      if (generation !== meetingQueueGenerationRef.current) {
+        throw new RequestFailure("Meeting processing stopped", { kind: "cancelled" });
+      }
+      await processWithAI(
+        combinedTranscription,
+        effectiveSystemPrompt,
+        [],
+        combinedSource,
+        segments[segments.length - 1].capturedAt
+      );
     },
     [
       selectedAIProvider,
@@ -1694,6 +1734,9 @@ export function useAudioOverlay() {
     notice,
     queueDepth,
     estimatedBacklogSeconds,
+    oldestPendingSeconds,
+    recentMeetingErrors,
+    meetingTimings,
     setupRequired,
     startCapture,
     stopCapture,

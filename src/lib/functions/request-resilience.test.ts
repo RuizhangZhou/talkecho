@@ -4,9 +4,14 @@ import {
   CoalescingTaskQueue,
   RequestFailure,
   runWithRetry,
+  normalizeRequestFailure,
 } from "./request-resilience";
 
 describe("request failure classification", () => {
+  it("classifies native timeout strings separately from network failures", () => {
+    expect(normalizeRequestFailure("Provider request timed out").kind).toBe("timeout");
+    expect(normalizeRequestFailure("Could not connect to the provider").kind).toBe("network");
+  });
   it("marks rate limits and server errors as retryable", () => {
     const rateLimit = classifyHttpFailure(429, "Too Many Requests", "", "2");
     expect(rateLimit.retryable).toBe(true);

@@ -161,7 +161,7 @@ export const OperationSection = ({
   const historicalMessages = useMemo(
     () =>
       conversation.messages
-        .slice(2)
+        .slice()
         .sort((left, right) => right.timestamp - left.timestamp),
     [conversation.messages]
   );
@@ -183,7 +183,7 @@ export const OperationSection = ({
 
   return (
     <div className="space-y-3 select-text">
-      {(lastAIResponse || isAIProcessing) && !includeMicrophone && (
+      {isAIProcessing && !includeMicrophone && (
         <div className="space-y-2">
           <div className="flex items-center gap-2">
             <BotIcon className="w-3 h-3" />
@@ -276,7 +276,7 @@ export const OperationSection = ({
         </div>
       )}
 
-      {!includeMicrophone && conversation.messages.length > 2 && (
+      {!includeMicrophone && conversation.messages.length > 0 && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <h3

@@ -37,6 +37,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "test": "vitest run",
+    "test:native": "node scripts/test-native.cjs",
     "preview": "vite preview",
     "tauri": "tauri",
     "bump": "node scripts/bump-version.cjs",
