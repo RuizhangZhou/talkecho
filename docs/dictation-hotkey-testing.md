@@ -96,6 +96,11 @@ and [GetAsyncKeyState limitations](https://learn.microsoft.com/en-us/windows/win
   to launch/inject on an inaccessible/long-idle desktop. No override is used.
 - No mstsc client was running. RDP/fullscreen/focus/physical/sleep acceptance
   remains pending; the observed standby interruption is not an acceptance test.
+- A later broader check found an msrdc process (PID 8760), but all enumerated
+  top-level windows were hidden, MainWindowHandle was zero and none was in the
+  foreground. Its existence does not establish a usable development-server
+  session. Window classes/visibility only were inspected, not titles/credentials;
+  no connection or background client process was changed.
 
 ## Release smoke test
 
