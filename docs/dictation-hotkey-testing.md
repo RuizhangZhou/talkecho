@@ -102,6 +102,35 @@ and [GetAsyncKeyState limitations](https://learn.microsoft.com/en-us/windows/win
   session. Window classes/visibility only were inspected, not titles/credentials;
   no connection or background client process was changed.
 
+### Coordinated desktop smoke: 2026-10-12
+
+After the user reported being connected, the input desktop was verified as
+unlocked `Default`, with recent input and neither Ctrl reported held. Five
+sequential runs of the diagnostic executable passed on the actual Windows
+desktop. All used `-HookOnly` (implicitly enabled for fault injection): no
+recording, transcription, model call or text insertion was dispatched.
+
+| Scenario | Test-owned PID | Result |
+| --- | --- | --- |
+| Short tagged press, ten repeats, matching release; Left Ctrl exclusion and untagged injected bypass | 11656 | Passed |
+| Tagged hold across a 30-second renewal; living owner consumes release before handoff | 5320 | Passed |
+| Test-only owner removal during hold; guard observes release; next press toggles | 33692 | Passed |
+| Owner removal plus release during outage; later complete gesture clears stale state; next press toggles | 34880 | Passed |
+| Hidden-window idle for 35 seconds, idle renewal, then paired tagged input | 25304 | Passed |
+
+Captured native logs corroborate the guard installation, handoff and
+`recovered_release=true` transitions for both fault-injection runs. Each script
+exited successfully and terminated only its own application process. These are
+real hook/injection checks, not physical-key or RDP acceptance: tagged injected
+events use the isolated test stream, not physical press ownership.
+
+The executable ran in console session 1 on `WINDELL-1MD3K9I`; foreground snapshots
+showed VS Code. Enumeration found no visible RDP client window. The msrdc process
+had MainWindowHandle zero. A connection on another computer, another desktop or
+a minimized/hidden client has not been ruled out. Confirm the client host and
+bring the intended RDP window into view before claiming windowed/fullscreen or
+remote modifier-state coverage. No remote session, sleep or lock was changed.
+
 ## Release smoke test
 
 Exit existing TalkEcho instances first. From the repository directory:
@@ -135,8 +164,9 @@ in, a test-owned hold, no physical hold, and no existing guard. The script waits
 for a guard, observes a real tagged release and verifies the next complete press
 toggles. `-MissedRelease` also sends the release during the outage, then requires
 recovery on a later genuine up; no timeout/async-state reset is accepted.
-These fault-injection scenarios remain **unexecuted** until a quiet desktop is
-available; script parsing/readiness rejection do not count as their passing.
+The hook-only and fault-injection scenarios passed in the coordinated desktop
+run above. Normal recording/HUD smoke and physical/RDP scenarios remain pending;
+script parsing/readiness rejection alone do not count as passing those checks.
 Do not type or use dictation during the test. Synthetic keys do not prove that
 every physical keyboard or competing hook behaves identically.
 This test temporarily injects desktop-wide keys and may show a recording HUD;
