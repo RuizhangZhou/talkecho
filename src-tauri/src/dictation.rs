@@ -22,7 +22,9 @@ const DICTATION_WINDOW_HEIGHT: f64 = 140.0;
 
 #[cfg(target_os = "windows")]
 mod windows_impl {
-    use super::hotkey::{self, Decision, PressState, Route, RoutingState, Source, VK_RCONTROL};
+    use super::hotkey::{
+        self, Decision, Edge, PressState, Route, RoutingState, Source, VK_RCONTROL,
+    };
     use super::*;
     use std::cell::Cell;
     use std::io::Write;
@@ -32,12 +34,14 @@ mod windows_impl {
     use enigo::{Enigo, Keyboard, Settings as EnigoSettings};
     use serde::Serialize;
     use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
-    use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
+    use windows::Win32::Foundation::{ERROR_INVALID_HOOK_HANDLE, LPARAM, LRESULT, WPARAM};
+    use windows::Win32::System::Threading::GetCurrentThreadId;
     use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
     use windows::Win32::UI::WindowsAndMessaging::{
         CallNextHookEx, DispatchMessageW, GetForegroundWindow, GetMessageW,
-        GetWindowThreadProcessId, KillTimer, SetTimer, SetWindowsHookExW, TranslateMessage,
-        UnhookWindowsHookEx, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_TIMER,
+        GetWindowThreadProcessId, KillTimer, PostThreadMessageW, SetTimer, SetWindowsHookExW,
+        TranslateMessage, UnhookWindowsHookEx, HHOOK, HOOKPROC, KBDLLHOOKSTRUCT, MSG,
+        WH_KEYBOARD_LL, WM_APP, WM_TIMER,
     };
 
     static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
@@ -48,12 +52,20 @@ mod windows_impl {
     thread_local! {
         static ROUTING: Cell<RoutingState> = Cell::new(RoutingState::default());
         static HOOK_GENERATION: Cell<u64> = const { Cell::new(0) };
+        static SLOT_GENERATIONS: Cell<[u64; 2]> = const { Cell::new([0, 0]) };
+        static OWNER_SLOT: Cell<usize> = const { Cell::new(0) };
+        static CANDIDATE_SLOT: Cell<Option<usize>> = const { Cell::new(None) };
+        static HOOK_THREAD: Cell<u32> = const { Cell::new(0) };
         static ALLOW_TEST_INPUT: Cell<bool> = const { Cell::new(false) };
     }
     static WORKER: OnceLock<mpsc::SyncSender<HotkeyWork>> = OnceLock::new();
     static DROPPED_WORK: AtomicU64 = AtomicU64::new(0);
     static LOG_LOCK: Mutex<()> = Mutex::new(());
     const HOOK_REFRESH_MS: u32 = 30_000;
+    const WM_FINISH_HOOK_HANDOFF: u32 = WM_APP + 70;
+    // Only enabled in explicitly opted-in smoke processes, during a test-owned
+    // hold with no physical hold. Reproduces a silently removed owner hook.
+    const WM_TEST_REMOVE_OWNER: u32 = WM_APP + 71;
 
     enum HotkeyWork {
         Toggle,
@@ -64,6 +76,9 @@ mod windows_impl {
     struct EdgeTrace {
         time_ms: u32,
         generation: u64,
+        slot: usize,
+        role: &'static str,
+        recovered_release: bool,
         msg: u32,
         vk: u32,
         scan: u32,
@@ -135,12 +150,54 @@ mod windows_impl {
         }
     }
 
-    unsafe extern "system" fn keyboard_hook_proc(
+    fn promote_candidate_if_released() {
+        if ROUTING.get().can_renew() {
+            if let Some(candidate) = CANDIDATE_SLOT.get() {
+                OWNER_SLOT.set(candidate);
+                // Handle cleanup belongs in the message pump, not the hook.
+                unsafe {
+                    let _ = PostThreadMessageW(
+                        HOOK_THREAD.get(),
+                        WM_FINISH_HOOK_HANDOFF,
+                        WPARAM(0),
+                        LPARAM(0),
+                    );
+                }
+            }
+        }
+    }
+
+    unsafe extern "system" fn keyboard_hook_a(
+        code: i32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        keyboard_hook_proc(0, code, wparam, lparam)
+    }
+
+    unsafe extern "system" fn keyboard_hook_b(
+        code: i32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        keyboard_hook_proc(1, code, wparam, lparam)
+    }
+
+    unsafe fn keyboard_hook_proc(
+        slot: usize,
         code: i32,
         wparam: WPARAM,
         lparam: LPARAM,
     ) -> LRESULT {
         if code >= 0 {
+            if slot != OWNER_SLOT.get() {
+                if CANDIDATE_SLOT.get() != Some(slot) {
+                    return CallNextHookEx(None, code, wparam, lparam);
+                }
+                // During a held press the candidate is a release guard, NOT
+                // the new consumer at the head of the chain.
+                promote_candidate_if_released();
+            }
             let msg = wparam.0 as u32;
             let info = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
 
@@ -152,26 +209,57 @@ mod windows_impl {
                 GetWindowThreadProcessId(foreground, Some(&mut foreground_pid));
                 let source = hotkey::source(info.flags.0, info.dwExtraInfo, ALLOW_TEST_INPUT.get());
                 let before = ROUTING.get();
-                let mut after = before;
-                let decision = after.transition(source, msg, || queue_work(HotkeyWork::Toggle));
-                ROUTING.set(after);
-
-                // Snapshot only metadata here, not window titles or typed keys.
-                // Formatting/file I/O stays on the worker and the queue is bounded.
-                queue_work(HotkeyWork::Edge(EdgeTrace {
+                let mut trace = EdgeTrace {
                     time_ms: info.time,
-                    generation: HOOK_GENERATION.get(),
+                    generation: SLOT_GENERATIONS.get()[slot],
+                    slot,
+                    role: "owner",
+                    recovered_release: false,
                     msg,
                     vk: info.vkCode,
                     scan: info.scanCode,
                     flags: info.flags.0,
                     source,
-                    decision,
+                    decision: Decision {
+                        route: Route::Forward,
+                        edge: Edge::Guard,
+                    },
                     before,
-                    after,
+                    after: before,
                     foreground: foreground.0 as usize,
                     foreground_pid,
-                }));
+                };
+
+                if slot != OWNER_SLOT.get() {
+                    trace.role = "guard";
+                    if before.guard_consumes_repeat(source, msg) {
+                        trace.decision = Decision {
+                            route: Route::Consume,
+                            edge: Edge::Repeat,
+                        };
+                        queue_work(HotkeyWork::Edge(trace));
+                        return LRESULT(1);
+                    }
+                    // A competing hook may have seen down ahead of the old
+                    // owner. Always let the genuine up continue to that chain.
+                    // A living old owner still consumes its own matching up.
+                    let result = CallNextHookEx(None, code, wparam, lparam);
+                    let mut after = ROUTING.get();
+                    trace.recovered_release = after.recover_guard_release(source, msg, before);
+                    ROUTING.set(after);
+                    trace.after = after;
+                    queue_work(HotkeyWork::Edge(trace));
+                    promote_candidate_if_released();
+                    return result;
+                }
+
+                let mut after = before;
+                let decision = after.transition(source, msg, || queue_work(HotkeyWork::Toggle));
+                ROUTING.set(after);
+                trace.decision = decision;
+                trace.after = after;
+                queue_work(HotkeyWork::Edge(trace));
+                promote_candidate_if_released();
 
                 if decision.route == Route::Consume {
                     return LRESULT(1);
@@ -238,6 +326,8 @@ mod windows_impl {
         // Serial dispatch preserves physical press order. Window creation must
         // run on the UI thread, never in the low-level hook or its message pump.
         let app = app.clone();
+        let test_no_ui = std::env::var("TALKECHO_HOTKEY_TEST_INPUT").as_deref() == Ok("1")
+            && std::env::var("TALKECHO_HOTKEY_TEST_NO_UI").as_deref() == Ok("1");
         std::thread::spawn(move || {
             for work in receiver {
                 let dropped = DROPPED_WORK.swap(0, Ordering::Relaxed);
@@ -248,16 +338,19 @@ mod windows_impl {
                 }
                 match work {
                     HotkeyWork::Toggle => {
-                        if let Err(error) = app.run_on_main_thread(toggle_dictation) {
+                        if test_no_ui {
+                            diagnostic("test-only toggle accepted; no UI/audio/provider dispatch");
+                        } else if let Err(error) = app.run_on_main_thread(toggle_dictation) {
                             diagnostic(&format!("hotkey dispatch failed: {error}"));
                         }
                     }
                     HotkeyWork::Diagnostic(message) => diagnostic(&message),
                     HotkeyWork::Edge(edge) => diagnostic(&format!(
-                        "right_ctrl time_ms={} generation={} msg=0x{:x} vk=0x{:x} scan=0x{:x} flags=0x{:x} source={:?} edge={:?} route={:?} physical={:?}->{:?} test={:?}->{:?} foreground=0x{:x} foreground_pid={}",
-                        edge.time_ms, edge.generation, edge.msg, edge.vk, edge.scan, edge.flags,
+                        "right_ctrl time_ms={} generation={} slot={} role={} recovered_release={} msg=0x{:x} vk=0x{:x} scan=0x{:x} flags=0x{:x} source={:?} edge={:?} route={:?} physical={:?}->{:?} test={:?}->{:?} press_ids={}/{} foreground=0x{:x} foreground_pid={}",
+                        edge.time_ms, edge.generation, edge.slot, edge.role, edge.recovered_release, edge.msg, edge.vk, edge.scan, edge.flags,
                         edge.source, edge.decision.edge, edge.decision.route,
                         edge.before.physical, edge.after.physical, edge.before.test, edge.after.test,
+                        edge.after.physical_press, edge.after.test_press,
                         edge.foreground, edge.foreground_pid,
                     )),
                 }
@@ -265,6 +358,7 @@ mod windows_impl {
         });
 
         std::thread::spawn(|| unsafe {
+            HOOK_THREAD.set(GetCurrentThreadId());
             // Only an explicitly opted-in test process accepts our tagged
             // synthetic input. Other injected Ctrl events always pass untouched.
             ALLOW_TEST_INPUT.set(std::env::var("TALKECHO_HOTKEY_TEST_INPUT").as_deref() == Ok("1"));
@@ -279,29 +373,66 @@ mod windows_impl {
             let report = |message: String| {
                 queue_work(HotkeyWork::Diagnostic(message));
             };
-            let install =
-                || match SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook_proc), None, 0) {
+            let install = |slot: usize| {
+                let callback: HOOKPROC = if slot == 0 {
+                    Some(keyboard_hook_a)
+                } else {
+                    Some(keyboard_hook_b)
+                };
+                let generation = HOOK_GENERATION.get() + 1;
+                let mut generations = SLOT_GENERATIONS.get();
+                generations[slot] = generation;
+                SLOT_GENERATIONS.set(generations);
+                match SetWindowsHookExW(WH_KEYBOARD_LL, callback, None, 0) {
                     Ok(hook) => {
-                        HOOK_GENERATION.set(HOOK_GENERATION.get() + 1);
+                        HOOK_GENERATION.set(generation);
                         Some(hook)
                     }
                     Err(error) => {
                         report(format!("hook installation failed: {error}"));
                         None
                     }
-                };
-            let mut hook = install();
+                }
+            };
+            let remove = |hooks: &mut [Option<HHOOK>; 2], slot: usize| {
+                if let Some(handle) = hooks[slot] {
+                    if let Err(error) = UnhookWindowsHookEx(handle) {
+                        if error.code()
+                            != windows::core::HRESULT::from_win32(ERROR_INVALID_HOOK_HANDLE.0)
+                        {
+                            // Don't reuse a slot with an uncertain live hook.
+                            report(format!("hook cleanup failed slot={slot}: {error}"));
+                            return false;
+                        }
+                    }
+                    hooks[slot] = None;
+                }
+                true
+            };
+            let finish_handoff = |hooks: &mut [Option<HHOOK>; 2]| {
+                if let Some(candidate) = CANDIDATE_SLOT.get() {
+                    if OWNER_SLOT.get() == candidate && remove(hooks, 1 - candidate) {
+                        CANDIDATE_SLOT.set(None);
+                        report(format!(
+                            "keyboard hook handoff complete owner_slot={candidate} generation={}",
+                            SLOT_GENERATIONS.get()[candidate]
+                        ));
+                    }
+                }
+            };
+            let mut hooks = [install(0), None];
             report(format!(
                 "keyboard hook installed={} generation={} state={:?} test_input={}",
-                hook.is_some(),
+                hooks[0].is_some(),
                 HOOK_GENERATION.get(),
                 ROUTING.get(),
                 ALLOW_TEST_INPUT.get()
             ));
             // Windows provides no notification when it removes a timed-out hook.
-            // Renew twice per minute, including after sleep, and retry failures.
-            // Never move ahead of another application's hook mid-press: it may
-            // already have seen the down and would then miss a consumed up.
+            report(format!("keyboard hook thread_id={}", HOOK_THREAD.get()));
+            // At most two hooks: owner + temporary release guard. Consumption
+            // changes owners only between presses; a real up can recover local
+            // ownership even if Windows silently removed the old consumer.
             let timer = SetTimer(None, 0, HOOK_REFRESH_MS, None);
             if timer == 0 {
                 report("hook recovery timer failed".into());
@@ -313,24 +444,70 @@ mod windows_impl {
                     report(format!("hook message loop exited: {result}"));
                     break;
                 }
+                if msg.message == WM_FINISH_HOOK_HANDOFF {
+                    finish_handoff(&mut hooks);
+                    continue;
+                }
+                if msg.message == WM_TEST_REMOVE_OWNER {
+                    let state = ROUTING.get();
+                    if ALLOW_TEST_INPUT.get()
+                        && CANDIDATE_SLOT.get().is_none()
+                        && state.physical == PressState::Idle
+                        && state.test == PressState::Consumed
+                        && remove(&mut hooks, OWNER_SLOT.get())
+                    {
+                        report("test-only owner hook removed during tagged hold".into());
+                    }
+                    continue;
+                }
                 if msg.message == WM_TIMER && msg.wParam.0 == timer {
-                    if !ROUTING.get().can_renew() {
+                    if CANDIDATE_SLOT.get().is_some() {
+                        promote_candidate_if_released();
+                        finish_handoff(&mut hooks);
+                        if let Some(candidate) = CANDIDATE_SLOT.get() {
+                            if OWNER_SLOT.get() != candidate && remove(&mut hooks, candidate) {
+                                // The guard itself can also disappear silently.
+                                // Replacing a pass-release guard doesn't steal
+                                // up from the old chain. Never reset ownership.
+                                if let Some(next) = install(candidate) {
+                                    hooks[candidate] = Some(next);
+                                    report(format!(
+                                        "keyboard hook guard renewed generation={}",
+                                        HOOK_GENERATION.get()
+                                    ));
+                                } else {
+                                    CANDIDATE_SLOT.set(None);
+                                }
+                            }
+                        }
                         report(format!(
-                            "keyboard hook renewal deferred: active press state={:?} generation={}",
+                            "keyboard hook handoff tick state={:?} candidate={:?}",
                             ROUTING.get(),
-                            HOOK_GENERATION.get()
+                            CANDIDATE_SLOT.get()
                         ));
                         continue;
                     }
-                    // Install first: if renewal fails, retain the previous hook.
-                    if let Some(next) = install() {
-                        if let Some(previous) = hook.replace(next) {
-                            let _ = UnhookWindowsHookEx(previous);
+                    let next_slot = 1 - OWNER_SLOT.get();
+                    if hooks[next_slot].is_some() {
+                        report("hook renewal skipped: no free callback slot".into());
+                        continue;
+                    }
+                    CANDIDATE_SLOT.set(Some(next_slot));
+                    if let Some(next) = install(next_slot) {
+                        hooks[next_slot] = Some(next);
+                        if ROUTING.get().can_renew() {
+                            promote_candidate_if_released();
+                            finish_handoff(&mut hooks);
+                            report(format!(
+                                "keyboard hook renewed generation={}",
+                                HOOK_GENERATION.get()
+                            ));
+                        } else {
+                            report(format!("keyboard hook guard installed generation={} owner_slot={} state={:?}",
+                                HOOK_GENERATION.get(), OWNER_SLOT.get(), ROUTING.get()));
                         }
-                        report(format!(
-                            "keyboard hook renewed generation={}",
-                            HOOK_GENERATION.get()
-                        ));
+                    } else {
+                        CANDIDATE_SLOT.set(None);
                     }
                     continue;
                 }
@@ -340,8 +517,8 @@ mod windows_impl {
             if timer != 0 {
                 let _ = KillTimer(None, timer);
             }
-            if let Some(hook) = hook {
-                let _ = UnhookWindowsHookEx(hook);
+            for slot in 0..2 {
+                remove(&mut hooks, slot);
             }
         });
     }

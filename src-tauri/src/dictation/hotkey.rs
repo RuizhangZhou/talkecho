@@ -35,6 +35,7 @@ pub enum Edge {
     OrphanUp,
     Unknown,
     Bypass,
+    Guard,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -111,8 +112,7 @@ impl PressState {
     }
 }
 
-// Never infer that a swallowed key has physically been released from a zero
-// GetAsyncKeyState result, a timeout, or a focus change. None proves release.
+// Safe to transfer consumption ownership only between complete presses.
 pub fn can_renew(physical: PressState, test: PressState) -> bool {
     physical == PressState::Idle && test == PressState::Idle
 }
@@ -121,6 +121,8 @@ pub fn can_renew(physical: PressState, test: PressState) -> bool {
 pub struct RoutingState {
     pub physical: PressState,
     pub test: PressState,
+    pub physical_press: u64,
+    pub test_press: u64,
 }
 
 impl RoutingState {
@@ -131,8 +133,18 @@ impl RoutingState {
         try_toggle: impl FnOnce() -> bool,
     ) -> Decision {
         match source {
-            Source::Physical => self.physical.transition(msg, try_toggle),
-            Source::Test => self.test.transition(msg, try_toggle),
+            Source::Physical => {
+                if self.physical == PressState::Idle && is_down(msg) {
+                    self.physical_press = self.physical_press.wrapping_add(1);
+                }
+                self.physical.transition(msg, try_toggle)
+            }
+            Source::Test => {
+                if self.test == PressState::Idle && is_down(msg) {
+                    self.test_press = self.test_press.wrapping_add(1);
+                }
+                self.test.transition(msg, try_toggle)
+            }
             Source::Injected => Decision {
                 route: Route::Forward,
                 edge: Edge::Bypass,
@@ -143,6 +155,49 @@ impl RoutingState {
     pub fn can_renew(self) -> bool {
         can_renew(self.physical, self.test)
     }
+
+    // A replacement hook shields repeats of an already-consumed press, but
+    // MUST let a genuine up continue to the old hook and intervening hooks.
+    pub fn guard_consumes_repeat(self, source: Source, msg: u32) -> bool {
+        is_down(msg)
+            && match source {
+                Source::Physical => self.physical == PressState::Consumed,
+                Source::Test => self.test == PressState::Consumed,
+                Source::Injected => false,
+            }
+    }
+
+    // Called AFTER CallNextHookEx. If the old hook was removed (or an earlier
+    // hook swallowed this release), our guard has still observed a genuine up.
+    // A press ID prevents a reentrant/new down from being cleared by an older up.
+    pub fn recover_guard_release(&mut self, source: Source, msg: u32, before: Self) -> bool {
+        if !matches!(msg, WM_KEYUP | WM_SYSKEYUP) {
+            return false;
+        }
+        match source {
+            Source::Physical
+                if self.physical_press == before.physical_press
+                    && before.physical != PressState::Idle
+                    && self.physical == before.physical =>
+            {
+                self.physical = PressState::Idle;
+                true
+            }
+            Source::Test
+                if self.test_press == before.test_press
+                    && before.test != PressState::Idle
+                    && self.test == before.test =>
+            {
+                self.test = PressState::Idle;
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
+fn is_down(msg: u32) -> bool {
+    matches!(msg, WM_KEYDOWN | WM_SYSKEYDOWN)
 }
 
 #[cfg(test)]
@@ -339,6 +394,66 @@ mod tests {
             state.transition(Source::Physical, WM_KEYUP, || false).route,
             Route::Consume
         );
+        assert!(state.can_renew());
+    }
+
+    #[test]
+    fn guard_recovers_a_removed_owner_only_after_a_real_release() {
+        let mut state = RoutingState::default();
+        state.transition(Source::Physical, WM_KEYDOWN, || true);
+        let before = state;
+        assert!(state.guard_consumes_repeat(Source::Physical, WM_SYSKEYDOWN));
+        assert!(!state.recover_guard_release(Source::Physical, WM_KEYDOWN, before));
+        assert!(!state.recover_guard_release(Source::Injected, WM_KEYUP, before));
+        assert_eq!(state.physical, PressState::Consumed);
+        assert!(state.recover_guard_release(Source::Physical, WM_KEYUP, before));
+        assert!(state.can_renew());
+        assert_eq!(
+            state.transition(Source::Physical, WM_KEYDOWN, || true).edge,
+            Edge::Down
+        );
+    }
+
+    #[test]
+    fn guard_does_not_clear_a_reentrant_new_press() {
+        let mut state = RoutingState::default();
+        state.transition(Source::Physical, WM_KEYDOWN, || true);
+        let before = state;
+        // CallNextHookEx may reenter the installing thread. The owner receives
+        // the up and a new down before the outer guard callback returns.
+        state.transition(Source::Physical, WM_KEYUP, || false);
+        state.transition(Source::Physical, WM_KEYDOWN, || true);
+        assert!(!state.recover_guard_release(Source::Physical, WM_KEYUP, before));
+        assert_eq!(state.physical, PressState::Consumed);
+    }
+
+    #[test]
+    fn guard_preserves_forwarded_pairs_and_separate_test_ownership() {
+        let mut state = RoutingState::default();
+        state.transition(Source::Physical, WM_KEYDOWN, || false);
+        state.transition(Source::Test, WM_KEYDOWN, || true);
+        let before = state;
+        assert!(!state.guard_consumes_repeat(Source::Physical, WM_KEYDOWN));
+        assert!(state.guard_consumes_repeat(Source::Test, WM_KEYDOWN));
+        assert!(state.recover_guard_release(Source::Test, WM_KEYUP, before));
+        assert_eq!(state.physical, PressState::Forwarded);
+        assert!(!state.can_renew());
+        assert!(state.recover_guard_release(Source::Physical, WM_SYSKEYUP, before));
+        assert!(state.can_renew());
+    }
+
+    #[test]
+    fn guard_never_steals_release_from_intervening_competing_hook() {
+        let mut state = RoutingState::default();
+        let down = state.transition(Source::Physical, WM_KEYDOWN, || true);
+        assert_eq!(down.route, Route::Consume);
+        // Competing hook was ahead of owner and saw down. New guard is ahead of
+        // BOTH; it passes up to the competitor, then the old owner consumes it.
+        assert!(!state.guard_consumes_repeat(Source::Physical, WM_KEYUP));
+        let before = state;
+        let up = state.transition(Source::Physical, WM_KEYUP, || false);
+        assert_eq!(up.route, Route::Consume);
+        assert!(!state.recover_guard_release(Source::Physical, WM_KEYUP, before));
         assert!(state.can_renew());
     }
 
