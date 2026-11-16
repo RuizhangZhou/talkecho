@@ -9,10 +9,29 @@ import { shouldUseTalkEchoAPI } from "@/lib";
 const RECORDER_SAMPLE_RATE = 16000;
 const RECORDER_BUFFER_SIZE = 4096;
 
-// TEMPORARY DEBUG: mirrors progress to the Rust terminal since this window
-// has no visible devtools.
-const debugLog = (message: string) => {
-  invoke("dictation_debug_log", { message }).catch(() => {});
+type DictationState = { active: boolean; sequence: number };
+
+type DictationLifecycle =
+  | "mounted"
+  | "microphoneRequested"
+  | "microphoneReady"
+  | "microphoneFailed"
+  | "recordingStarted"
+  | "noAudio"
+  | "transcriptionReturned"
+  | "emptyTranscript"
+  | "cleanupReturned"
+  | "textInjected"
+  | "textInjectionFailed"
+  | "processingFailed"
+  | "syncFailed"
+  | "listenerRegistrationFailed"
+  | { staleState: DictationState }
+  | { toggleReceived: DictationState }
+  | { synchronized: DictationState };
+
+const logLifecycle = (event: DictationLifecycle) => {
+  invoke("dictation_log_lifecycle", { event }).catch(() => {});
 };
 
 export type DictationStatus =
@@ -80,7 +99,6 @@ export function useDictation() {
       streamRef.current !== null ||
       audioContextRef.current !== null
     ) {
-      debugLog("startRecording: ignored duplicate start request");
       return;
     }
 
@@ -88,14 +106,14 @@ export function useDictation() {
     startingRequestRef.current = requestId;
 
     try {
-      debugLog("startRecording: requesting getUserMedia...");
+      logLifecycle("microphoneRequested");
       setErrorText("");
       setResultText("");
       setInjected(false);
       chunksRef.current = [];
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      debugLog("startRecording: getUserMedia resolved");
+      logLifecycle("microphoneReady");
 
       // Stop may be pressed while the browser permission/device request is in
       // flight. Never attach a stream that belongs to a cancelled start.
@@ -104,7 +122,6 @@ export function useDictation() {
         !dictationActiveRef.current
       ) {
         stream.getTracks().forEach((track) => track.stop());
-        debugLog("startRecording: discarded stream from cancelled start");
         return;
       }
       streamRef.current = stream;
@@ -112,7 +129,6 @@ export function useDictation() {
       const audioContext = new AudioContext({ sampleRate: RECORDER_SAMPLE_RATE });
       audioContextRef.current = audioContext;
       sampleRateRef.current = audioContext.sampleRate;
-      debugLog(`startRecording: AudioContext.sampleRate=${audioContext.sampleRate}`);
 
       const source = audioContext.createMediaStreamSource(stream);
       sourceRef.current = source;
@@ -130,11 +146,9 @@ export function useDictation() {
       processor.connect(audioContext.destination);
 
       setStatus("recording");
-      debugLog("startRecording: status set to 'recording'");
+      logLifecycle("recordingStarted");
     } catch (err) {
-      debugLog(
-        `startRecording: ERROR ${err instanceof Error ? err.message : String(err)}`
-      );
+      logLifecycle("microphoneFailed");
       if (startingRequestRef.current === requestId) {
         teardownRecording();
         setStatus("error");
@@ -159,9 +173,8 @@ export function useDictation() {
     teardownRecording();
 
     const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-    debugLog(`stopRecording: ${chunks.length} chunks, totalLength=${totalLength}`);
     if (totalLength === 0) {
-      debugLog("stopRecording: no audio captured, returning to idle");
+      logLifecycle("noAudio");
       setStatus("idle");
       invoke("hide_dictation_window", { expectedSequence: dictationSequenceRef.current }).catch(() => {});
       return;
@@ -177,14 +190,10 @@ export function useDictation() {
     try {
       setStatus("transcribing");
       const audioBlob = floatArrayToWav(combined, sampleRateRef.current, "wav");
-      debugLog(`stopRecording: encoded wav blob, size=${audioBlob.size} bytes`);
 
       const useTalkEchoAPI = await shouldUseTalkEchoAPI();
       const sttProviderConfig = allSttProviders.find(
         (p) => p.id === selectedDictationSttProvider.provider
-      );
-      debugLog(
-        `stopRecording: useTalkEchoAPI=${useTalkEchoAPI} sttProvider=${selectedDictationSttProvider.provider} found=${!!sttProviderConfig} language=${dictationSttLanguage}`
       );
       if (!useTalkEchoAPI && (!selectedDictationSttProvider.provider || !sttProviderConfig)) {
         throw new Error("No speech-to-text provider configured. Set one up in Dev Space.");
@@ -195,13 +204,12 @@ export function useDictation() {
         selectedProvider: selectedDictationSttProvider,
         audio: audioBlob,
         language: dictationSttLanguage,
-        onDebug: (message) => debugLog(message),
       });
-      debugLog(`stopRecording: STT returned "${rawTranscript}"`);
+      logLifecycle("transcriptionReturned");
 
       const trimmed = rawTranscript.trim();
       if (!trimmed) {
-        debugLog("stopRecording: empty transcript");
+        logLifecycle("emptyTranscript");
         setStatus("error");
         setErrorText(
           `No speech recognized (Dictation STT language: ${dictationSttLanguage}). Try Auto detect or Chinese in Dev Space → STT Providers.`
@@ -213,15 +221,12 @@ export function useDictation() {
       const aiProviderConfig = allAiProviders.find(
         (p) => p.id === selectedAIProvider.provider
       );
-      debugLog(
-        `stopRecording: aiProvider=${selectedAIProvider.provider} found=${!!aiProviderConfig}`
-      );
       const cleaned = await cleanupTranscript({
         text: trimmed,
         provider: useTalkEchoAPI ? undefined : aiProviderConfig,
         selectedProvider: selectedAIProvider,
       });
-      debugLog(`stopRecording: cleanup returned "${cleaned}"`);
+      logLifecycle("cleanupReturned");
 
       setResultText(cleaned);
       setStatus("done");
@@ -229,19 +234,15 @@ export function useDictation() {
       try {
         await invoke("inject_text", { text: cleaned });
         setInjected(true);
-        debugLog("stopRecording: inject_text succeeded");
-      } catch (err) {
+        logLifecycle("textInjected");
+      } catch {
         // Direct injection isn't available (e.g. non-Windows) — the floating
         // window already shows the cleaned text with a copy button.
         setInjected(false);
-        debugLog(
-          `stopRecording: inject_text failed: ${err instanceof Error ? err.message : String(err)}`
-        );
+        logLifecycle("textInjectionFailed");
       }
     } catch (err) {
-      debugLog(
-        `stopRecording: ERROR ${err instanceof Error ? err.message : String(err)}`
-      );
+      logLifecycle("processingFailed");
       setStatus("error");
       setErrorText(err instanceof Error ? err.message : String(err));
     }
@@ -262,7 +263,7 @@ export function useDictation() {
   }, [startRecording, stopRecordingAndProcess]);
 
   useEffect(() => {
-    debugLog("useDictation: mounted, registering toggle listener");
+    logLifecycle("mounted");
     let disposed = false;
     let unlisten: (() => void) | undefined;
     let removeVisibilityListener: (() => void) | undefined;
@@ -270,9 +271,7 @@ export function useDictation() {
     const register = async () => {
       const applyState = (active: boolean, sequence: number) => {
         if (sequence < dictationSequenceRef.current) {
-          debugLog(
-            `useDictation: ignored stale state active=${active} sequence=${sequence}`
-          );
+          logLifecycle({ staleState: { active, sequence } });
           return;
         }
 
@@ -303,16 +302,11 @@ export function useDictation() {
         }
       };
 
-      const registeredUnlisten = await listen<{
-        active: boolean;
-        sequence: number;
-      }>(
+      const registeredUnlisten = await listen<DictationState>(
         "dictation://toggle",
         (event) => {
           const { active, sequence } = event.payload;
-          debugLog(
-            `useDictation: received toggle active=${active} sequence=${sequence}`
-          );
+          logLifecycle({ toggleReceived: { active, sequence } });
           applyState(active, sequence);
         }
       );
@@ -324,13 +318,9 @@ export function useDictation() {
       unlisten = registeredUnlisten;
 
       const synchronize = async () => {
-        const currentState = await invoke<{ active: boolean; sequence: number }>(
-          "get_dictation_state"
-        );
+        const currentState = await invoke<DictationState>("get_dictation_state");
         if (!disposed) {
-          debugLog(
-            `useDictation: synchronized active=${currentState.active} sequence=${currentState.sequence}`
-          );
+          logLifecycle({ synchronized: currentState });
           applyState(currentState.active, currentState.sequence);
         }
       };
@@ -338,7 +328,7 @@ export function useDictation() {
       // was suspended. Reconcile on visibility restoration without polling.
       const onVisible = () => {
         if (document.visibilityState === "visible") {
-          synchronize().catch((error) => debugLog(`useDictation: sync failed: ${error}`));
+          synchronize().catch(() => logLifecycle("syncFailed"));
         }
       };
       document.addEventListener("visibilitychange", onVisible);
@@ -346,13 +336,7 @@ export function useDictation() {
       await synchronize();
     };
 
-    register().catch((err) => {
-      debugLog(
-        `useDictation: failed to register toggle listener: ${
-          err instanceof Error ? err.message : String(err)
-        }`
-      );
-    });
+    register().catch(() => logLifecycle("listenerRegistrationFailed"));
 
     return () => {
       disposed = true;

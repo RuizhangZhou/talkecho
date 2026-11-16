@@ -244,7 +244,9 @@ hook generation/slot/owner-or-guard role, recovery marker/press IDs,
 installation/renewal/handoff, native toggle/show, frontend sync and
 recording start. Logs rotate at approximately 1 MiB, retaining one previous file.
 Persistent logs exclude transcripts, audio, prompts, other typed keys, window
-titles and credentials. Queue pressure drops work instead of blocking a hook;
+titles and credentials. The webview reports typed lifecycle events and state
+only. Transcript text and raw provider errors are excluded from both file and
+terminal diagnostics. Queue pressure drops work instead of blocking a hook;
 new presses fail open as whole pairs. A dropped-work message means the event
 trace may be incomplete: do not infer a missing up solely from that trace.
 An owner and guard may both log the same actual release; this is not two

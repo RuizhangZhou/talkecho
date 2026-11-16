@@ -725,20 +725,93 @@ pub fn get_dictation_state() -> impl serde::Serialize {
     platform::get_state()
 }
 
-// TEMPORARY DEBUG: lets the dictation window's webview (which has no visible
-// devtools) report progress to the same terminal as the Rust logs.
-#[tauri::command]
-pub fn dictation_debug_log(message: String) {
-    // Persist only lifecycle metadata, never transcripts, prompts or credentials.
-    #[cfg(target_os = "windows")]
-    if message.starts_with("useDictation:")
-        || message == "startRecording: requesting getUserMedia..."
-        || message == "startRecording: getUserMedia resolved"
-        || message == "startRecording: status set to 'recording'"
-    {
-        windows_impl::diagnostic(&format!("frontend: {message}"));
-        return;
+// The webview can report lifecycle metadata without sending speech or errors
+// from providers to either the log file or the terminal.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub enum DictationLifecycle {
+    Mounted,
+    MicrophoneRequested,
+    MicrophoneReady,
+    MicrophoneFailed,
+    RecordingStarted,
+    NoAudio,
+    TranscriptionReturned,
+    EmptyTranscript,
+    CleanupReturned,
+    TextInjected,
+    TextInjectionFailed,
+    ProcessingFailed,
+    StaleState { active: bool, sequence: u64 },
+    ToggleReceived { active: bool, sequence: u64 },
+    Synchronized { active: bool, sequence: u64 },
+    SyncFailed,
+    ListenerRegistrationFailed,
+}
+
+#[cfg(any(target_os = "windows", test))]
+impl DictationLifecycle {
+    fn message(self) -> String {
+        match self {
+            Self::Mounted => "useDictation: mounted, registering toggle listener".into(),
+            Self::MicrophoneRequested => "startRecording: requesting getUserMedia...".into(),
+            Self::MicrophoneReady => "startRecording: getUserMedia resolved".into(),
+            Self::MicrophoneFailed => "startRecording: microphone initialization failed".into(),
+            Self::RecordingStarted => "startRecording: status set to 'recording'".into(),
+            Self::NoAudio => "stopRecording: no audio captured, returning to idle".into(),
+            Self::TranscriptionReturned => "stopRecording: transcription returned".into(),
+            Self::EmptyTranscript => "stopRecording: empty transcript".into(),
+            Self::CleanupReturned => "stopRecording: cleanup returned".into(),
+            Self::TextInjected => "stopRecording: inject_text succeeded".into(),
+            Self::TextInjectionFailed => "stopRecording: inject_text failed".into(),
+            Self::ProcessingFailed => "stopRecording: processing failed".into(),
+            Self::StaleState { active, sequence } => {
+                format!("useDictation: ignored stale state active={active} sequence={sequence}")
+            }
+            Self::ToggleReceived { active, sequence } => {
+                format!("useDictation: received toggle active={active} sequence={sequence}")
+            }
+            Self::Synchronized { active, sequence } => {
+                format!("useDictation: synchronized active={active} sequence={sequence}")
+            }
+            Self::SyncFailed => "useDictation: synchronization failed".into(),
+            Self::ListenerRegistrationFailed => {
+                "useDictation: failed to register toggle listener".into()
+            }
+        }
     }
-    #[cfg(debug_assertions)]
-    eprintln!("[dictation][js] {message}");
+}
+
+#[tauri::command]
+pub fn dictation_log_lifecycle(event: DictationLifecycle) {
+    #[cfg(target_os = "windows")]
+    windows_impl::diagnostic(&format!("frontend: {}", event.message()));
+    #[cfg(not(target_os = "windows"))]
+    let _ = event;
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::DictationLifecycle;
+    use serde_json::{from_value, json};
+
+    #[test]
+    fn frontend_diagnostics_accept_metadata_without_free_form_messages() {
+        let state: DictationLifecycle =
+            from_value(json!({"synchronized": {"active": false, "sequence": 0}})).unwrap();
+        assert_eq!(
+            state.message(),
+            "useDictation: synchronized active=false sequence=0"
+        );
+
+        assert!(from_value::<DictationLifecycle>(json!("syncFailed")).is_ok());
+        for invalid in [
+            json!("useDictation: raw transcript"),
+            json!({"syncFailed": {"message": "provider response"}}),
+            json!({"synchronized": {"active": false, "sequence": "0\nextra text"}}),
+            json!({"synchronized": {"active": false, "sequence": 0, "message": "extra text"}}),
+        ] {
+            assert!(from_value::<DictationLifecycle>(invalid.clone()).is_err(), "{invalid}");
+        }
+    }
 }
