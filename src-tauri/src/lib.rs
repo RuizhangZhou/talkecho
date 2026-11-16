@@ -175,7 +175,7 @@ pub fn run() {
             dictation::show_dictation_window,
             dictation::hide_dictation_window,
             dictation::get_dictation_state,
-            dictation::dictation_debug_log,
+            dictation::dictation_log_lifecycle,
             tray::set_recording_state,
         ])
         .setup(|app| {
